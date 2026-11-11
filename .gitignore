@@ -9,6 +9,7 @@
 .local/
 .cache/
 .tools/
+.superpowers/
 node_modules/
 target/
 dist/
