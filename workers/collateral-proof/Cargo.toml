@@ -1,0 +1,17 @@
+[package]
+name = "proofcredit-proof-worker"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+proofcredit-proof-protocol = { path = "../../crates/proof-protocol" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+wasi = "=0.13.3"
+
+[dev-dependencies]
+rlp = "=0.5.2"
+tiny-keccak = { version = "=2.0.2", features = ["keccak"] }
