@@ -1,0 +1,34 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.secrets/
+.near-credentials/
+.local/
+.cache/
+.tools/
+node_modules/
+target/
+dist/
+.venv/
+__pycache__/
+*.pyc
+submission-payload*.json
+idea-context.md
+# Preserve historical research locally; version the active build plan.
+/docs/*
+!/docs/proofcredit/
+
+# Local credentials, RPC endpoints and generated development artifacts.
+.envrc
+.direnv/
+.aws/
+.signers/
+*.keystore
+*.log
+.coverage/
+coverage/
+playwright-report/
+test-results/
