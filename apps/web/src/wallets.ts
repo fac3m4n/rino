@@ -5,12 +5,12 @@ import {
   createWalletClient,
   custom,
   http,
-  parseEther,
   type Address,
   type EIP1193Provider,
 } from "viem";
 import { sepolia } from "viem/chains";
 import type { Config, WalletAction } from "@proofcredit/coordinator/api";
+import { ActionFailure, submissionFailure } from "./outcomes";
 
 type Injected = EIP1193Provider & {
   on?: (name: string, listener: (data: unknown) => void) => void;
@@ -90,47 +90,85 @@ export function useWallets() {
       actions: WalletAction[],
       expectedAccount: string,
     ) {
+      // Validate the complete batch before the first irreversible wallet action.
+      for (const action of actions) {
+        if (
+          action.chain !== "near" ||
+          action.receiverId !== config.near.controllerId
+        )
+          throw new Error("Unexpected wallet transaction destination.");
+        if (
+          !/^[a-z][a-z0-9_]*$/.test(action.methodName) ||
+          !/^[1-9][0-9]*$/.test(action.gas) ||
+          BigInt(action.gas) > 300_000_000_000_000n ||
+          !/^(0|[1-9][0-9]*)$/.test(action.deposit) ||
+          BigInt(action.deposit) >= 1n << 128n ||
+          !action.args ||
+          typeof action.args !== "object" ||
+          Array.isArray(action.args)
+        )
+          throw new Error("Invalid NEAR wallet action.");
+        JSON.stringify(action.args);
+      }
       const wallet = await (await nearConnector(config)).wallet();
       const accounts = await wallet.getAccounts({ network: "testnet" });
       if (accounts[0]?.accountId !== expectedAccount)
         throw new Error(`Connect ${expectedAccount} before signing.`);
+      const hashes: string[] = [];
       for (const action of actions) {
-        if (action.receiverId !== config.near.controllerId)
-          throw new Error("Unexpected wallet transaction destination.");
-        const result = await wallet.signAndSendTransaction({
-          network: "testnet",
-          signerId: expectedAccount,
-          receiverId: action.receiverId,
-          actions: [
-            {
-              type: "FunctionCall",
-              params: {
-                methodName: action.methodName,
-                args: action.args,
-                gas: action.gas,
-                deposit: action.deposit,
+        const earlier = hashes.length;
+        try {
+          const result = await wallet.signAndSendTransaction({
+            network: "testnet",
+            signerId: expectedAccount,
+            receiverId: action.receiverId,
+            actions: [
+              {
+                type: "FunctionCall",
+                params: {
+                  methodName: action.methodName,
+                  args: action.args,
+                  gas: action.gas,
+                  deposit: action.deposit,
+                },
               },
-            },
-          ],
-        });
-        if (typeof result.status === "object" && "Failure" in result.status)
-          throw new Error(
-            "The NEAR transaction failed. Review the wallet receipt.",
-          );
-        if (
-          result.receipts_outcome.some(
-            (receipt: { outcome: { status: unknown } }) =>
-              typeof receipt.outcome.status === "object" &&
-              receipt.outcome.status !== null &&
-              "Failure" in receipt.outcome.status,
+            ],
+          });
+          const hash =
+            result.transaction?.hash ?? result.transaction_outcome?.id;
+          if (hash) hashes.push(hash);
+          const failed = (status: unknown) =>
+            !!status && typeof status === "object" && "Failure" in status;
+          if (
+            failed(result.status) ||
+            result.receipts_outcome.some(
+              (receipt: { outcome: { status: unknown } }) =>
+                failed(receipt.outcome.status),
+            )
           )
-        )
-          throw new Error(
-            "A NEAR execution receipt failed. Refresh chain state before retrying.",
-          );
+            throw new ActionFailure(
+              `NEAR execution failed.${earlier ? " Earlier transactions were confirmed; reconcile their effects." : " Review the wallet receipt."} Known hashes: ${hashes.join(", ")}.`,
+              earlier ? "partial" : "failed",
+              "confirmation",
+              [...hashes],
+            );
+          if (
+            !result.status ||
+            typeof result.status !== "object" ||
+            !("SuccessValue" in result.status)
+          )
+            throw new ActionFailure(
+              `Outcome uncertain. NEAR final execution is not confirmed. Known hashes: ${hashes.join(", ")}. Reconcile before resubmitting.`,
+              "unknown",
+              "confirmation",
+              [...hashes],
+            );
+        } catch (error) {
+          throw submissionFailure(error, hashes);
+        }
       }
     },
-    async fundEvm(config: Config, vault: Address) {
+    async fundEvm(config: Config, vault: Address, shortfallWei: bigint) {
       if (config.mode !== "public")
         throw new Error("Use the local actor in local mode.");
       const provider = injected();
@@ -142,25 +180,80 @@ export function useWallets() {
         throw new Error("Switch the Ethereum wallet to Sepolia.");
       const [account] = await wallet.getAddresses();
       if (!account) throw new Error("Connect your Ethereum wallet first.");
-      const hash = await wallet.sendTransaction({
-        account,
-        to: vault,
-        value: parseEther("0.12"),
-      });
-      const client = createPublicClient({
-        chain: sepolia,
-        transport: config.ethereum.rpcUrl
-          ? http(config.ethereum.rpcUrl)
-          : custom(provider),
-      });
-      const receipt = await client.waitForTransactionReceipt({
-        hash,
-        confirmations: 1,
-        timeout: 120000,
-      });
-      if (receipt.status !== "success")
-        throw new Error(`Ethereum funding reverted: ${hash}`);
-      return hash;
+      if (
+        typeof shortfallWei !== "bigint" ||
+        shortfallWei <= 0n ||
+        shortfallWei > 120_000_000_000_000_000n
+      )
+        throw new Error("No valid collateral shortfall to fund.");
+      const hashes: string[] = [];
+      try {
+        const hash = await wallet.sendTransaction({
+          account,
+          to: vault,
+          value: shortfallWei,
+          data: "0x",
+        });
+        hashes.push(hash);
+        const client = createPublicClient({
+          chain: sepolia,
+          transport: config.ethereum.rpcUrl
+            ? http(config.ethereum.rpcUrl)
+            : custom(provider),
+        });
+        let replacementReason: string | undefined;
+        const receipt = await client.waitForTransactionReceipt({
+          hash,
+          confirmations: 1,
+          timeout: 120000,
+          onReplaced(replacement) {
+            replacementReason = replacement.reason;
+            hashes.push(replacement.transactionReceipt.transactionHash);
+          },
+        });
+        const includedHash = receipt.transactionHash;
+        if (!hashes.includes(includedHash)) hashes.push(includedHash);
+        if (receipt.status !== "success")
+          throw new ActionFailure(
+            `Ethereum funding reverted: ${includedHash}`,
+            "failed",
+            "confirmation",
+            [...hashes],
+          );
+        if (replacementReason === "cancelled")
+          throw new ActionFailure(
+            `Ethereum funding cancelled: ${includedHash}. The vault was not funded.`,
+            "cancelled",
+            "confirmation",
+            [...hashes],
+          );
+        const included = await client.getTransaction({ hash: includedHash });
+        if (
+          included.hash !== includedHash ||
+          included.chainId !== sepolia.id ||
+          included.from.toLowerCase() !== account.toLowerCase() ||
+          included.to?.toLowerCase() !== vault.toLowerCase() ||
+          included.value !== shortfallWei ||
+          included.input !== "0x" ||
+          included.blockHash !== receipt.blockHash ||
+          receipt.from.toLowerCase() !== account.toLowerCase() ||
+          receipt.to?.toLowerCase() !== vault.toLowerCase()
+        )
+          throw new ActionFailure(
+            `Included transaction does not match the intended vault funding: ${includedHash}. Funding was not confirmed.`,
+            "failed",
+            "confirmation",
+            [...hashes],
+          );
+        return includedHash;
+      } catch (error) {
+        const failure = submissionFailure(error, hashes);
+        if (failure.uncertainMutation && hashes.length)
+          throw new ActionFailure(failure.message, "unknown", "confirmation", [
+            ...hashes,
+          ]);
+        throw failure;
+      }
     },
   };
 }

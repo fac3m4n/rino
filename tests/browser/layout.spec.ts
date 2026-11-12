@@ -194,3 +194,66 @@ test("@layout retired default disables empty claims and obsolete recovery contro
     page.getByRole("button", { name: "Advance to maturity", exact: true }),
   ).toBeDisabled();
 });
+
+test("@history default retains immutable debt at the historical boundary", async ({
+  page,
+}) => {
+  await page.route("**/api/state", (r) =>
+    r.fulfill({
+      json: {
+        ...stateFixture,
+        market: {
+          ...stateFixture.market!,
+          phase: "DefaultLocked",
+          debt_units: "0",
+        },
+        settlement: { ...settlementFixture, branch: "default" },
+      },
+    }),
+  );
+  await page.goto("/");
+  await expect(
+    page.getByText("Debt at default", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByTestId("loan-debt")).toHaveText("101 CREDIT", {
+    timeout: 3000,
+  });
+});
+for (const funded of [false, true])
+  test(`@history ${funded ? "funded" : "empty"} cancellation has truthful funding history`, async ({
+    page,
+  }) => {
+    await page.route("**/api/state", (r) =>
+      r.fulfill({
+        json: {
+          ...stateFixture,
+          market: {
+            ...stateFixture.market!,
+            phase: "Closed",
+            borrowed_at: null,
+            proof_timestamp: null,
+            debt_units: "0",
+          },
+          evidence: null,
+          ethereum: {
+            ...stateFixture.ethereum!,
+            vaultBalanceWei: "999999999999999999",
+          }, // Later retired deposit must not invent prior funding.
+          settlement: {
+            ...settlementFixture,
+            stage: "Complete",
+            branch: "cancel",
+            retired: true,
+            checkpoint_block_number: "42",
+            borrower_surplus_wei: funded ? "119958000000000000" : "0",
+            fees_paid_wei: funded ? "42000000000000" : "0",
+          },
+        },
+      }),
+    );
+    await page.goto("/");
+    const step = page.locator(".journey li").filter({ hasText: "Fund vault" });
+    await expect(step).toHaveClass(funded ? "done" : "skipped", {
+      timeout: 3000,
+    });
+  });

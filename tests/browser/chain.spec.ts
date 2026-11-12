@@ -315,3 +315,90 @@ test("@refill real withdrawn CREDIT can be restored without depositing more ETH"
     ),
   );
 });
+
+test("@partial real partial collateral is funded by delta, reauthenticated and borrowed", async ({
+  page,
+}, info) => {
+  await page.goto(origin);
+  await action(page, "Initialize local market", "initialize");
+  const config = await page.request
+    .get(`${origin}/api/config`)
+    .then((r) => r.json());
+  const initial = (await page.request
+    .get(`${origin}/api/state`)
+    .then((r) => r.json())) as State;
+  const rpc = async (method: string, params: unknown[]) => {
+    expect(new URL(config.ethereum.rpcUrl).hostname).toBe("127.0.0.1");
+    const response = await fetch(config.ethereum.rpcUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    });
+    const data = await response.json();
+    expect(data.error).toBeUndefined();
+    return data.result;
+  };
+  const [from] = await rpc("eth_accounts", []);
+  await rpc("eth_sendTransaction", [
+    { from, to: initial.market!.vault, value: "0xb1a2bc2ec50000" },
+  ]); // 0.05 ETH ordinary partial deposit, not setBalance.
+  // General proof eligibility intentionally accepts any positive nonce-zero balance.
+  const proof = await page.request.post(`${origin}/api/actions`, {
+    headers: { "X-ProofCredit-CSRF": config.csrfToken, Origin: origin },
+    data: { action: "prove", role: "borrower" },
+  });
+  expect(proof.ok(), await proof.text()).toBe(true);
+  const inadequate = (await page.request
+    .get(`${origin}/api/state`)
+    .then((r) => r.json())) as State;
+  expect(inadequate.evidence?.balance_wei).toBe("50000000000000000");
+  expect(inadequate.market?.proof_fresh).toBe(true);
+  await page.reload();
+  await expect(page.getByTestId("vault-balance")).toHaveText("0.05 ETH", {
+    timeout: 10000,
+  });
+  await page.getByRole("button", { name: "Lender", exact: true }).click();
+  await action(page, "Fund offer + vault", "fund");
+  const topped = (await page.request
+    .get(`${origin}/api/state`)
+    .then((r) => r.json())) as State;
+  expect(topped.ethereum?.vaultBalanceWei).toBe("120000000000000000");
+  expect(topped.evidence?.balance_wei).toBe("50000000000000000");
+  await page.getByRole("button", { name: "Borrower", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Authenticate collateral", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "Borrow 100 CREDIT", exact: true }),
+  ).toHaveCount(0);
+  await action(page, "Authenticate collateral", "prove");
+  await action(page, "Borrow 100 CREDIT", "borrow");
+  const final = (await page.request
+    .get(`${origin}/api/state`)
+    .then((r) => r.json())) as State;
+  const receipts = (await page.request
+    .get(`${origin}/api/receipts`)
+    .then((r) => r.json())) as Receipt[];
+  expect(final.market?.phase).toBe("Active");
+  expect(final.market?.debt_units).toBe("101000000");
+  expect(final.evidence?.balance_wei).toBe("120000000000000000");
+  expect(
+    receipts.filter((r) => r.chain === "ethereum" && r.action === "fund"),
+  ).toHaveLength(1);
+  const funding = receipts.find(
+    (r) => r.chain === "ethereum" && r.action === "fund",
+  )!;
+  const included = await rpc("eth_getTransactionByHash", [funding.hash]);
+  expect(BigInt(included.value)).toBe(70000000000000000n);
+  await page.screenshot({
+    path: `.cache/proofcredit-browser/partial-${info.project.name}.png`,
+    fullPage: true,
+  });
+  await writeFile(
+    resolve(
+      root,
+      `.cache/proofcredit-browser/partial-${info.project.name}-evidence.json`,
+    ),
+    JSON.stringify({ inadequate, topped, final, receipts, included }, null, 2),
+  );
+});

@@ -29,6 +29,7 @@ import {
   settlementLabel,
   loanHistory,
   offeredAction,
+  fundingHistory,
 } from "./model";
 import {
   snapshot,
@@ -43,6 +44,11 @@ import {
   type UnconfirmedAction,
 } from "./snapshots";
 import { useWallets } from "./wallets";
+import { ActionFailure } from "./outcomes";
+import {
+  collateralShortfall,
+  collateralSufficient,
+} from "@proofcredit/coordinator/collateral";
 
 const short = (value?: string | null) =>
   value
@@ -176,6 +182,7 @@ export default function App() {
         if (unknownAction.current) unknownAction.current.checked = data;
         if (
           unknownAction.current &&
+          !unknownAction.current.requireExplicitContinuation &&
           mutationObserved(
             unknownAction.current.action,
             unknownAction.current.before,
@@ -221,6 +228,18 @@ export default function App() {
   const market = state?.market;
   const settlement = state?.settlement;
   const local = config?.mode === "local";
+  const fundingShortfall = (() => {
+    try {
+      return market
+        ? collateralShortfall(
+            market.terms,
+            state?.ethereum?.vaultBalanceWei,
+          ).toString()
+        : "0";
+    } catch {
+      return "0";
+    }
+  })();
   const guard = (action: ActionName) =>
     !config || !state
       ? "Connecting to the coordinator."
@@ -283,7 +302,11 @@ export default function App() {
         role === "borrower"
       ) {
         if (!market?.vault) throw new Error("The vault has not been derived.");
-        const hash = await wallets.fundEvm(config, market.vault as Address);
+        const hash = await wallets.fundEvm(
+          config,
+          market.vault as Address,
+          collateralShortfall(market.terms, state.ethereum?.vaultBalanceWei),
+        );
         if (lane.isCurrent(token))
           setMessage(
             `Ethereum funding included: ${hash}. Authenticate collateral before borrowing.`,
@@ -309,8 +332,14 @@ export default function App() {
       }
     } catch (error) {
       if (lane.isCurrent(token)) {
-        if (error instanceof RequestFailure && error.uncertainMutation) {
-          unknownAction.current = { action, before };
+        if (error instanceof ActionFailure && error.uncertainMutation) {
+          unknownAction.current = {
+            action,
+            before,
+            knownHashes: error.knownHashes,
+            // Balance deltas or an earlier batch receipt cannot authenticate an ambiguous wallet submission.
+            requireExplicitContinuation: !(error instanceof RequestFailure),
+          };
           setContinued(false);
           setUncertain(true);
         }
@@ -371,12 +400,14 @@ export default function App() {
         primary = "fund";
         stageTitle = "Put your ETH to work.";
         stageCopy = local
-          ? "The local lender funds 100 CREDIT in escrow, transfers the 1 CREDIT fee endowment, and deposits 0.12 test ETH."
-          : "Fund the CREDIT offer as lender, then send 0.12 Sepolia ETH as borrower. Your wallet authorizes each action.";
-        if (BigInt(state?.ethereum?.vaultBalanceWei ?? "0") > 0n) {
+          ? "The local lender funds 100 CREDIT in escrow, transfers the 1 CREDIT fee endowment, and tops up insufficient collateral to 0.12 test ETH."
+          : "Fund the CREDIT offer as lender, then top up insufficient collateral to 0.12 Sepolia ETH as borrower. Your wallet authorizes each action.";
+        if (
+          collateralSufficient(market.terms, state?.ethereum?.vaultBalanceWei)
+        ) {
           stageTitle = "Restore the CREDIT offer.";
           stageCopy =
-            "The vault already holds ETH. Fund 100 CREDIT in lender escrow without depositing more collateral.";
+            "The vault already holds sufficient ETH. Fund 100 CREDIT in lender escrow without depositing more collateral.";
         }
       } else if (offered === "prove") {
         primary = "prove";
@@ -409,13 +440,13 @@ export default function App() {
     }
   }
   const history = loanHistory(state);
+  const funded = fundingHistory(state);
   const steps = [
     {
       name: "Fund vault",
-      done:
-        BigInt(state?.ethereum?.vaultBalanceWei ?? "0") > 0n ||
-        (!!market && market.phase !== "Offered"),
-      sub: "Ethereum collateral",
+      done: funded.done,
+      skipped: funded.skipped,
+      sub: funded.skipped ? "Not funded · cancellation" : "Ethereum collateral",
     },
     {
       name: "Prove collateral",
@@ -473,7 +504,9 @@ export default function App() {
             ? local
               ? "Fund offer + vault"
               : "Fund CREDIT offer"
-            : actionNames[action]}
+            : action === "fund"
+              ? `Fund vault · ${eth(fundingShortfall)} ETH`
+              : actionNames[action]}
         {!secondary && pending !== action ? <ArrowRight size={17} /> : null}
       </button>
     );
@@ -728,7 +761,12 @@ export default function App() {
                         : "Outstanding debt"}
                     </span>
                     <b data-testid="loan-debt">
-                      {credit(market?.debt_units)} <small>CREDIT</small>
+                      {credit(
+                        market?.phase === "DefaultLocked"
+                          ? market.terms.debt_units
+                          : market?.debt_units,
+                      )}{" "}
+                      <small>CREDIT</small>
                     </b>
                   </div>
                   <div className="card-row">

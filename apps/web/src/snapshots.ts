@@ -137,6 +137,8 @@ export interface UnconfirmedAction {
   action: ActionName;
   before: Snapshot;
   checked?: Snapshot;
+  knownHashes?: string[];
+  requireExplicitContinuation?: boolean;
 }
 export function canContinueFromCheckedState(
   unknown: UnconfirmedAction | null,

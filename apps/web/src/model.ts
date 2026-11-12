@@ -1,3 +1,4 @@
+import { collateralSufficient } from "@proofcredit/coordinator/collateral";
 import type {
   ActionName,
   Config,
@@ -79,6 +80,14 @@ export function actionGuard(
   if (action === "initialize")
     return market?.vault ? "The market is already initialized." : null;
   if (!market) return "Initialize the market first.";
+  if (
+    action === "fund" &&
+    config.mode === "public" &&
+    role === "lender" &&
+    BigInt(market.available_liquidity_units) >=
+      BigInt(market.terms.principal_units)
+  )
+    return "The CREDIT offer is funded. Switch to the borrower to fund or authenticate ETH collateral.";
   if (action === "recover" && state.settlement?.retired)
     return "This vault is retired; no settlement work remains.";
   if (action === "advance-maturity" && market.phase !== "Active")
@@ -104,8 +113,13 @@ export function actionGuard(
   if (action === "borrow") {
     if (market.phase !== "Offered")
       return "This loan cannot be borrowed again.";
-    if (!market.proof_fresh)
-      return "Authenticate a fresh collateral proof first.";
+    if (!collateralSufficient(market.terms, state.ethereum?.vaultBalanceWei))
+      return "Fund sufficient collateral before borrowing.";
+    if (
+      !market.proof_fresh ||
+      !collateralSufficient(market.terms, state.evidence?.balance_wei)
+    )
+      return "Authenticate a fresh financially sufficient collateral proof first.";
     if (
       BigInt(market.available_liquidity_units) <
       BigInt(market.terms.principal_units)
@@ -173,9 +187,32 @@ export function offeredAction(state: State, role: Role): ActionName {
       BigInt(state.market.terms.principal_units)
   )
     return "fund";
-  return BigInt(state.ethereum?.vaultBalanceWei ?? "0") === 0n
+  return !state.market ||
+    !collateralSufficient(state.market.terms, state.ethereum?.vaultBalanceWei)
     ? "fund"
-    : state.market?.proof_fresh
+    : state.market.proof_fresh &&
+        collateralSufficient(state.market.terms, state.evidence?.balance_wei)
       ? "borrow"
       : "prove";
+}
+
+/** Historical funding ignores deposits made after a terminal authenticated checkpoint. */
+export function fundingHistory(state: State | undefined): {
+  done: boolean;
+  skipped: boolean;
+} {
+  const positive = (value: unknown) =>
+    typeof value === "string" && /^[0-9]+$/.test(value) && BigInt(value) > 0n;
+  const s = state?.settlement;
+  const done =
+    !!state?.market?.borrowed_at ||
+    positive(state?.evidence?.balance_wei) ||
+    [
+      s?.balance_wei,
+      s?.fees_paid_wei,
+      s?.lender_paid_wei,
+      s?.borrower_surplus_wei,
+    ].some(positive) ||
+    (!s?.retired && positive(state?.ethereum?.vaultBalanceWei));
+  return { done, skipped: loanHistory(state).cancelled && !done };
 }

@@ -64,7 +64,7 @@ export const stateFixture: State = {
   },
   settlement: null,
   proofStatus: "Authenticated",
-  evidence: null,
+  evidence: { balance_wei: "120000000000000000" },
   ethereum: {
     vaultBalanceWei: "120000000000000000",
     vaultNonce: "0",

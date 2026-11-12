@@ -12,12 +12,14 @@ export interface RequestOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
 }
-export class RequestFailure extends Error {
-  constructor(
-    message: string,
-    readonly uncertainMutation = false,
-  ) {
-    super(message);
+import { ActionFailure } from "./outcomes";
+export class RequestFailure extends ActionFailure {
+  constructor(message: string, uncertainMutation = false) {
+    super(
+      message,
+      uncertainMutation ? "unknown" : "failed",
+      uncertainMutation ? "submission" : "before-submission",
+    );
   }
 }
 async function requestJson<T>(

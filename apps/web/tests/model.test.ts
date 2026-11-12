@@ -225,7 +225,11 @@ describe("honest cancellation history", () => {
 describe("public funding authority", () => {
   const offered = {
     ...state,
-    market: { ...state.market!, phase: "Offered" as const },
+    market: {
+      ...state.market!,
+      phase: "Offered" as const,
+      available_liquidity_units: "0",
+    },
   };
   it("allows CREDIT funding only from the connected lender NEAR account without an EVM wallet", () =>
     expect(
@@ -327,4 +331,62 @@ describe("offer liquidity can be restored independently of ETH", () => {
       ),
     ).toBe("borrow");
   });
+});
+
+describe("financial collateral routing", () => {
+  function offered(
+    balance: string,
+    proofBalance = balance,
+    fresh = true,
+  ): State {
+    return {
+      ...state,
+      market: {
+        ...state.market!,
+        phase: "Offered",
+        borrowed_at: null,
+        proof_fresh: fresh,
+      },
+      ethereum: { ...state.ethereum!, vaultBalanceWei: balance },
+      evidence: { balance_wei: proofBalance },
+    };
+  }
+  for (const balance of ["1", "50000000000000000", "112599999999999999"])
+    it(`keeps funding reachable for ${balance} wei and blocks borrowing`, () => {
+      const s = offered(balance);
+      expect(offeredAction(s, "borrower")).toBe("fund");
+      expect(actionGuard("borrow", config, s, "borrower")).toContain(
+        "collateral",
+      );
+    });
+  for (const balance of ["112600000000000000", "112600000000000001"])
+    it(`permits financially sufficient authenticated ${balance} wei`, () => {
+      const s = offered(balance);
+      expect(offeredAction(s, "borrower")).toBe("borrow");
+      expect(actionGuard("borrow", config, s, "borrower")).toBeNull();
+    });
+  it("requires new authentication after a topup when the old fresh proof was inadequate", () => {
+    const s = offered("120000000000000000", "1");
+    expect(offeredAction(s, "borrower")).toBe("prove");
+    expect(actionGuard("borrow", config, s, "borrower")).toContain("proof");
+  });
+  for (const bad of ["-1", "oops", "340282366920938463463374607431768211456"])
+    it(`safely blocks malformed or out-of-range collateral ${bad}`, () => {
+      expect(actionGuard("borrow", config, offered(bad), "borrower")).toContain(
+        "collateral",
+      );
+    });
+});
+
+it("a public lender whose CREDIT side is funded is directed to the borrower ETH side", () => {
+  const s = {
+    ...state,
+    market: { ...state.market!, phase: "Offered" as const },
+    ethereum: { ...state.ethereum!, vaultBalanceWei: "1" },
+  };
+  expect(
+    actionGuard("fund", { ...config, mode: "public" }, s, "lender", {
+      nearAccount: "lender.test",
+    }),
+  ).toContain("Switch to the borrower");
 });

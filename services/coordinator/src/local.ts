@@ -1,3 +1,4 @@
+import { collateralShortfall } from "./collateral.ts";
 import { Account, JsonRpcProvider, KeyPairSigner, actions } from "near-api-js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -787,15 +788,17 @@ export class LocalCoordinator {
             );
           if (market.available_liquidity_units === "0")
             await this.call("lender", "controller", "fund_liquidity", {}, 1n);
-          if (
-            BigInt(
-              await rpc(this.manifest.anvilUrl, "eth_getBalance", [
-                this.manifest.vault,
-                "latest",
-              ]),
-            ) === 0n
-          )
-            await this.fundEth();
+          const balance = BigInt(
+            await rpc(this.manifest.anvilUrl, "eth_getBalance", [
+              this.manifest.vault,
+              "latest",
+            ]),
+          );
+          const shortfall = collateralShortfall(
+            market.terms,
+            balance.toString(),
+          );
+          if (shortfall > 0n) await this.fundEth(shortfall);
           break;
         }
         case "prove": {
