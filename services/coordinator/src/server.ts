@@ -5,7 +5,7 @@ import { access, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { LocalCoordinator, PINS } from "./local.ts";
-import { PublicCoordinator } from "./public.ts";
+import { PublicCoordinator, TESTNET_RPC_URL } from "./public.ts";
 import { ROOT, loadManifest, sleep } from "./processes.ts";
 import { guardRequest, parseAction } from "./safety.ts";
 import type { Config, State, ActionResult, WalletAction } from "./api.ts";
@@ -49,7 +49,7 @@ export async function createApp(options: {
     csrfToken: token,
     near: {
       networkId: engine ? "sandbox" : "testnet",
-      rpcUrl: engine?.manifest.nearUrl ?? "https://rpc.testnet.near.org",
+      rpcUrl: engine?.manifest.nearUrl ?? TESTNET_RPC_URL,
       controllerId: engine
         ? "controller"
         : (publicEngine?.deployment.controllerId ?? ""),

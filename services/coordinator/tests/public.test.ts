@@ -34,6 +34,24 @@ async function adapter(extra: Record<string, unknown> = {}) {
   await writeFile(p, JSON.stringify({ ...deployment, ...extra }));
   return PublicCoordinator.fromFile(p);
 }
+it("sends public NEAR provider queries to the fixed working testnet transport", async () => {
+  const a = (await adapter())!;
+  const requests: string[] = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+    requests.push(String(url));
+    const request = JSON.parse(String(init?.body));
+    expect(request.method).toBe("status");
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: request.id,
+        result: { chain_id: "testnet" },
+      }),
+    );
+  });
+  expect((await a.provider.viewNodeStatus()).chain_id).toBe("testnet");
+  expect(requests).toEqual(["https://test.rpc.fastnear.com"]);
+});
 it.each([
   undefined,
   "",
@@ -161,6 +179,10 @@ it("keeps runtime credentials out of config and unavailable state API responses"
         headers: { host: "127.0.0.1:3000" },
       });
       expect(response.json().ready).toBe(false);
+      if (url === "/api/config")
+        expect(response.json().near.rpcUrl).toBe(
+          "https://test.rpc.fastnear.com",
+        );
       expect(response.body).not.toContain("synthetic-key");
       expect(response.body).not.toContain("alchemy.com");
     }

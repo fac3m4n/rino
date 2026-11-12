@@ -19,6 +19,7 @@ import type {
   Terms,
   WalletAction,
 } from "./api.ts";
+export const TESTNET_RPC_URL = "https://test.rpc.fastnear.com";
 interface Deployment {
   version: 2;
   controllerId: string;
@@ -82,7 +83,7 @@ async function ethereum(
 export class PublicCoordinator {
   readonly queue = new SerialQueue(4);
   readonly provider = new JsonRpcProvider({
-    url: "https://rpc.testnet.near.org",
+    url: TESTNET_RPC_URL,
   });
   private waiting: string = "";
   readonly #urls: readonly [string, string];

@@ -1,5 +1,6 @@
 import { it, expect } from "vitest";
 import { createApp } from "../src/server.ts";
+import type { LocalCoordinator } from "../src/local.ts";
 it("public mode returns precise readiness without fixture state or keys and rejects action injection", async () => {
   const app = await createApp({ origin: "http://127.0.0.1:3000" });
   try {
@@ -11,6 +12,7 @@ it("public mode returns precise readiness without fixture state or keys and reje
       })
     ).json();
     expect(config.mode).toBe("public");
+    expect(config.near.rpcUrl).toBe("https://test.rpc.fastnear.com");
     expect(config.ready).toBe(false);
     expect(config.readinessErrors.length).toBeGreaterThan(0);
     expect(JSON.stringify(config)).not.toMatch(
@@ -66,6 +68,30 @@ it("public mode returns precise readiness without fixture state or keys and reje
           })
         ).statusCode,
       ).toBeGreaterThanOrEqual(400);
+  } finally {
+    await app.close();
+  }
+});
+it("preserves the owned Sandbox RPC URL supplied by the local manifest", async () => {
+  const app = await createApp({
+    origin: "http://127.0.0.1:3000",
+    engine: {
+      manifest: {
+        nearUrl: "http://127.0.0.1:54321",
+        anvilUrl: "http://127.0.0.1:54322",
+      },
+    } as unknown as LocalCoordinator,
+  });
+  try {
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/config",
+      headers: { host: "127.0.0.1:3000" },
+    });
+    expect(response.json().near).toMatchObject({
+      networkId: "sandbox",
+      rpcUrl: "http://127.0.0.1:54321",
+    });
   } finally {
     await app.close();
   }
