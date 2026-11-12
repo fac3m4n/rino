@@ -191,6 +191,282 @@ fn confirmation_output(
     (id, serde_json::to_vec(&evidence).unwrap())
 }
 
+// Public MPC receipt plus independently recovered viem raw bytes/hash. The
+// original R parity is 03 while its normalized signature recovery bit is 0.
+fn live_mpc_fixture() -> serde_json::Value {
+    serde_json::from_str(include_str!(
+        "../tests/fixtures/mpc-live-normalized-parity.json"
+    ))
+    .unwrap()
+}
+fn live_mpc_controller(fixture: &serde_json::Value) -> Controller {
+    let mut c = cancelled();
+    c.vault = Some(fixture["expectedVault"].as_str().unwrap().into());
+    let transfer: proofcredit_settlement_protocol::TransferIntentDto =
+        serde_json::from_value(fixture["transfer"].clone()).unwrap();
+    let transfer = transfer.to_native().unwrap();
+    let s = &mut c.loan.as_mut().unwrap().settlement;
+    s.intent = Some(settlement::FrozenIntent {
+        transfer,
+        preimage: proofcredit_loan_core::signing_preimage(&transfer).unwrap(),
+        digest: proofcredit_settlement_protocol::fixed_hex::<32>(
+            fixture["signingDigest"].as_str().unwrap(),
+        )
+        .unwrap(),
+        before_balance: 120_000_000_000_000_000,
+        minimum_block: 123,
+    });
+    s.stage = settlement::SettlementStage::ReadyToSign;
+    c
+}
+fn mpc_callback(c: &mut Controller, packet: Vec<u8>) -> bool {
+    ctx("borrower.testnet", 1000);
+    drop(c.request_signature());
+    let request = c.pending.as_ref().unwrap().generation;
+    context(
+        "controller.testnet",
+        1000,
+        vec![PromiseResult::Successful(packet)],
+    );
+    c.on_signature_result(U64(request))
+}
+#[test]
+fn private_callback_accepts_actual_mpc_normalized_parity_and_exact_independent_transaction() {
+    let fixture = live_mpc_fixture();
+    let mut c = live_mpc_controller(&fixture);
+    let frozen = c.loan.as_ref().unwrap().settlement.intent.as_ref().unwrap();
+    assert_eq!(
+        hx(&signing_digest(&frozen.transfer).unwrap()),
+        fixture["signingDigest"]
+    );
+    let original = serde_json::to_vec(&fixture["signature"]).unwrap();
+    // The financial verifier's canonical packet interface must stay strict.
+    assert!(
+        proofcredit_loan_core::verify_mpc_signature(
+            &frozen.transfer,
+            proofcredit_settlement_protocol::fixed_hex::<20>(
+                fixture["expectedVault"].as_str().unwrap()
+            )
+            .unwrap(),
+            &original,
+        )
+        .is_err()
+    );
+    let digest = frozen.digest;
+    let transfer = frozen.transfer;
+    assert!(mpc_callback(&mut c, original));
+    let s = &c.loan.as_ref().unwrap().settlement;
+    assert_eq!(s.stage, settlement::SettlementStage::Signed);
+    assert_eq!(s.candidates.len(), 1);
+    let candidate = &s.candidates[0];
+    assert_eq!(hx(&candidate.raw), fixture["recoveries"][0]["raw"]);
+    assert_eq!(
+        hx(&candidate.hash),
+        fixture["recoveries"][0]["transactionHash"]
+    );
+    assert_eq!(candidate.signing_digest, digest);
+    assert_eq!(
+        hx(&candidate.r)[2..],
+        *fixture["signature"]["big_r"]["affine_point"]
+            .as_str()
+            .unwrap()
+            .get(2..)
+            .unwrap()
+    );
+    assert_eq!(
+        hx(&candidate.s)[2..],
+        *fixture["signature"]["s"]["scalar"].as_str().unwrap()
+    );
+    assert_eq!(candidate.recovery_id, 0);
+    assert_eq!(s.intent.as_ref().unwrap().transfer, transfer);
+    assert_eq!(s.intent.as_ref().unwrap().digest, digest);
+    assert!(c.pending.is_none());
+    assert!(!c.on_signature_result(U64(c.generation)));
+    assert_eq!(c.get_signed_transactions().len(), 1);
+}
+
+#[test]
+fn service_point_parity_is_callback_only_and_explicit_adoption_remains_canonical() {
+    let fixture = live_mpc_fixture();
+    let mut c = live_mpc_controller(&fixture);
+    let original = fixture["signature"].to_string();
+    ctx("borrower.testnet", 1000);
+    assert!(!c.adopt_signature(original));
+    assert!(c.get_signed_transactions().is_empty());
+    let mut canonical = fixture["signature"].clone();
+    canonical["big_r"]["affine_point"] = serde_json::json!(format!(
+        "02{}",
+        &fixture["signature"]["big_r"]["affine_point"]
+            .as_str()
+            .unwrap()[2..]
+    ));
+    assert!(c.adopt_signature(canonical.to_string()));
+    assert_eq!(
+        c.get_signed_transactions()[0].hash,
+        fixture["recoveries"][0]["transactionHash"]
+    );
+    // Both original compressed parities are valid service representations.
+    // The original bounded envelope, including padding, must be checked first.
+    for signature in [&fixture["signature"], &canonical] {
+        let mut c = live_mpc_controller(&fixture);
+        let mut raw = serde_json::to_vec(signature).unwrap();
+        raw.resize(1024, b' ');
+        assert!(mpc_callback(&mut c, raw));
+        assert_eq!(
+            c.get_signed_transactions()[0].hash,
+            fixture["recoveries"][0]["transactionHash"]
+        );
+    }
+}
+#[test]
+fn private_callback_rejects_malformed_service_envelopes_without_unlocking_intent() {
+    use serde_json::json;
+    let fixture = live_mpc_fixture();
+    let valid = fixture["signature"].clone();
+    let mut packets = vec![b"null".to_vec(), b"{".to_vec(), b"[]".to_vec()];
+    for (key, value) in [
+        ("unknown", json!(true)),
+        ("scheme", json!("Ed25519")),
+        ("scheme", json!(null)),
+        ("recovery_id", json!(2)),
+        ("recovery_id", json!(27)),
+        ("recovery_id", json!(-1)),
+        ("recovery_id", json!("0")),
+    ] {
+        let mut bad = valid.clone();
+        bad[key] = value;
+        packets.push(bad.to_string().into_bytes());
+    }
+    for nested in ["big_r", "s"] {
+        let mut bad = valid.clone();
+        bad[nested]["unknown"] = json!(true);
+        packets.push(bad.to_string().into_bytes());
+    }
+    // The duplicate values intentionally match: a Value-based parser would
+    // silently collapse them and admit the otherwise valid live signature.
+    for (key, value) in [
+        ("scheme", valid["scheme"].clone()),
+        ("big_r", valid["big_r"].clone()),
+        ("s", valid["s"].clone()),
+        ("recovery_id", valid["recovery_id"].clone()),
+        ("affine_point", valid["big_r"]["affine_point"].clone()),
+        ("scalar", valid["s"]["scalar"].clone()),
+    ] {
+        packets.push(
+            valid
+                .to_string()
+                .replacen(
+                    &format!("\"{key}\":"),
+                    &format!("\"{key}\":{value},\"{key}\":"),
+                    1,
+                )
+                .into_bytes(),
+        );
+    }
+    for point in [
+        format!(
+            "+2{}",
+            &valid["big_r"]["affine_point"].as_str().unwrap()[2..]
+        ),
+        format!(
+            "04{}",
+            &valid["big_r"]["affine_point"].as_str().unwrap()[2..]
+        ),
+        format!(
+            "00{}",
+            &valid["big_r"]["affine_point"].as_str().unwrap()[2..]
+        ),
+        format!("02{}", "ff".repeat(32)),
+        format!("03{}", "00".repeat(32)),
+        format!("03{}", "gg".repeat(32)),
+        "03".repeat(32),
+        "03".repeat(34),
+        format!("0x{}", valid["big_r"]["affine_point"].as_str().unwrap()),
+    ] {
+        let mut bad = valid.clone();
+        bad["big_r"]["affine_point"] = json!(point);
+        packets.push(bad.to_string().into_bytes());
+    }
+    for scalar in [
+        "00".repeat(32),
+        "ff".repeat(32),
+        "gg".repeat(32),
+        "01".repeat(31),
+    ] {
+        let mut bad = valid.clone();
+        bad["s"]["scalar"] = json!(scalar);
+        packets.push(bad.to_string().into_bytes());
+    }
+    let mut oversized = valid.to_string().into_bytes();
+    oversized.resize(1025, b' ');
+    packets.push(oversized);
+    for packet in packets {
+        let mut c = live_mpc_controller(&fixture);
+        let frozen = c.loan.as_ref().unwrap().settlement.intent.as_ref().unwrap();
+        let before = near_sdk::borsh::to_vec(frozen).unwrap();
+        assert!(
+            !mpc_callback(&mut c, packet.clone()),
+            "accepted {}",
+            String::from_utf8_lossy(&packet)
+        );
+        let s = &c.loan.as_ref().unwrap().settlement;
+        assert_eq!(
+            near_sdk::borsh::to_vec(s.intent.as_ref().unwrap()).unwrap(),
+            before
+        );
+        assert!(s.candidates.is_empty());
+        assert_eq!(s.stage, settlement::SettlementStage::ReadyToSign);
+        assert!(c.pending.is_none());
+    }
+}
+#[test]
+fn service_adapter_preserves_strict_recovery_vault_digest_and_low_s_checks() {
+    use serde_json::json;
+    let fixture = live_mpc_fixture();
+    let valid = fixture["signature"].clone();
+    let mut wrong_recovery = valid.clone();
+    wrong_recovery["recovery_id"] = json!(1);
+    let mut high_s = valid.clone();
+    // n - s for the actual live signature. Flip recovery as well so a
+    // high-s normalizer would turn it back into the accepted signature.
+    high_s["s"]["scalar"] =
+        json!("8adeb2912840b74e1c6c106161c87e37601ae1129e64ff7804ae90facd7c5234");
+    high_s["recovery_id"] = json!(1);
+    for packet in [wrong_recovery, high_s] {
+        let mut c = live_mpc_controller(&fixture);
+        assert!(!mpc_callback(&mut c, packet.to_string().into_bytes()));
+        assert!(c.get_signed_transactions().is_empty());
+    }
+    let mut c = live_mpc_controller(&fixture);
+    c.vault = Some(VAULT.into());
+    assert!(!mpc_callback(&mut c, valid.to_string().into_bytes()));
+    assert!(c.get_signed_transactions().is_empty());
+    for changed_field in ["nonce", "to", "value", "gas_price"] {
+        let mut c = live_mpc_controller(&fixture);
+        let transfer = &mut c
+            .loan
+            .as_mut()
+            .unwrap()
+            .settlement
+            .intent
+            .as_mut()
+            .unwrap()
+            .transfer;
+        match changed_field {
+            "nonce" => transfer.nonce += 1,
+            "to" => transfer.to = [0x11; 20],
+            "value" => transfer.value -= 1,
+            "gas_price" => transfer.gas_price += 1,
+            _ => unreachable!(),
+        }
+        assert!(
+            !mpc_callback(&mut c, valid.to_string().into_bytes()),
+            "accepted changed {changed_field}"
+        );
+        assert!(c.get_signed_transactions().is_empty());
+    }
+}
+
 #[test]
 fn cancellation_prepare_pins_economics_before_signing_and_recovers_exact_mpc_signature() {
     let mut c = cancelled();

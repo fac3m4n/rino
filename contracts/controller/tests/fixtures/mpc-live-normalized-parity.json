@@ -1,0 +1,38 @@
+{
+  "status": "diagnostic-only-no-relay",
+  "sourceTransaction": "G9n8qgYuf8csvcjqE9eGq4jJkYSVRSF73PgRJPeMoPYK",
+  "expectedVault": "0x10078b01828faebf2fa7c1bc89a6295d5c62456d",
+  "transfer": {
+    "chain_id": "11155111",
+    "nonce": "0",
+    "to": "0x29f2be03e3ce6a5f18e41abe833649b0be5e72c2",
+    "value": "119999999999160000",
+    "gas_limit": "21000",
+    "gas_price": "40"
+  },
+  "signingDigest": "0x5be97405345650ab2f925593c44672f698828fbcad76b7ca782de8e7dd25f054",
+  "signature": {
+    "scheme": "Secp256k1",
+    "big_r": {
+      "affine_point": "03c53dad275157444c0e34d9d968d79ee528beafd6f84aa3fb94828a3c3dd3d298"
+    },
+    "s": {
+      "scalar": "75214d6ed7bf48b1e393ef9e9e3781c75a93fbd410e3a0c3bb23cd9202b9ef0d"
+    },
+    "recovery_id": 0
+  },
+  "recoveries": [
+    {
+      "yParity": 0,
+      "address": "0x10078B01828faEBf2fA7C1bC89A6295d5C62456d",
+      "transactionHash": "0xb50a2d3b7f307873745298db4931c5acf288b50d1afe256bb34a33e7dab9f36c",
+      "raw": "0x02f86d83aa36a78028288252089429f2be03e3ce6a5f18e41abe833649b0be5e72c28801aa535d3cff2ec080c080a0c53dad275157444c0e34d9d968d79ee528beafd6f84aa3fb94828a3c3dd3d298a075214d6ed7bf48b1e393ef9e9e3781c75a93fbd410e3a0c3bb23cd9202b9ef0d"
+    },
+    {
+      "yParity": 1,
+      "address": "0xf0916eeBa3E03aF05e5ab43f01Fea94395928475",
+      "transactionHash": "0xf2fd99d62095efb2c3f2683702ba735cf3159d573c126266e70386fdb3049b44",
+      "raw": "0x02f86d83aa36a78028288252089429f2be03e3ce6a5f18e41abe833649b0be5e72c28801aa535d3cff2ec080c001a0c53dad275157444c0e34d9d968d79ee528beafd6f84aa3fb94828a3c3dd3d298a075214d6ed7bf48b1e393ef9e9e3781c75a93fbd410e3a0c3bb23cd9202b9ef0d"
+    }
+  ]
+}

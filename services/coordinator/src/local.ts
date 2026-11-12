@@ -35,7 +35,7 @@ export const PINS = {
   settlement:
     "a0efb7959a1f227d7e81579820bf3b3cec9804d94e5095fa6a90b301052e19c7",
   controller:
-    "d264dea9f45c12ca271654a5acd3949f6e7a7fcc7291f771bba87662cdc2a05b",
+    "f46bb1dedeca51f8f7820d5c74e30e0484421299adb3d6715545741ad1115497",
 };
 const MOCK_MODULE = resolve(
   ROOT,
