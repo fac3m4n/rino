@@ -1,0 +1,29 @@
+{
+  "name": "proofcredit",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "services/coordinator",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "tsx services/coordinator/src/supervisor.ts",
+    "test": "vitest run services/coordinator/tests",
+    "typecheck": "tsc --noEmit",
+    "build:web": "npm run build --workspace apps/web",
+    "check:financial": "./tooling/check-financial-flow.sh",
+    "dev:local": "./tooling/run-local-demo.sh",
+    "dev:public": "tsx services/coordinator/src/server.ts",
+    "build": "npm run typecheck && npm run build:web",
+    "test:web": "vitest run apps/web/tests",
+    "test:browser": "playwright test --config tests/browser/playwright.config.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0",
+    "@types/node": "24.19.2",
+    "prettier": "3.10.1",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.1.0"
+  }
+}

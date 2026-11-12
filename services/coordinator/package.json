@@ -1,0 +1,15 @@
+{
+  "name": "@proofcredit/coordinator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./api": "./src/api.ts"
+  },
+  "dependencies": {
+    "near-api-js": "7.5.3",
+    "viem": "2.57.19",
+    "fastify": "5.12.8",
+    "@fastify/static": "10.1.10"
+  }
+}
