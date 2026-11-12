@@ -14,6 +14,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 ARTIFACTS = [
     'wasm32-wasip2/release/proofcredit-proof-worker.wasm',
+    'wasm32-wasip2/release/proofcredit-settlement-worker.wasm',
     'wasm32-unknown-unknown/release/proofcredit_controller.wasm',
     'wasm32-unknown-unknown/release/proofcredit_pipeline_services.wasm',
 ]
@@ -25,20 +26,27 @@ def main():
     run = Path(tempfile.mkdtemp(prefix='check-', dir=scratch))
     checkouts = [run / 'checkout-a', run / 'different-location' / 'checkout-b']
     digests = {}
+    # Snapshot source once before either build. Otherwise live development during
+    # checkout-a's build can copy different source into checkout-b and masquerade
+    # as a location-dependent artifact failure.
+    snapshot = checkouts[0]
+    snapshot.mkdir(parents=True)
+    for directory in ['crates', 'contracts', 'workers', 'tests/proof-pipeline', 'tooling']:
+        shutil.copytree(ROOT / directory, snapshot / directory,
+                        ignore=shutil.ignore_patterns('target', '__pycache__'))
+    (snapshot / '.tools').symlink_to(ROOT / '.tools', target_is_directory=True)
+    (snapshot / '.cache').mkdir()
+    (snapshot / '.cache/cargo').symlink_to(ROOT / '.cache/cargo', target_is_directory=True)
+    checkouts[1].parent.mkdir(parents=True)
+    shutil.copytree(snapshot, checkouts[1], symlinks=True)
     for checkout in checkouts:
-        checkout.mkdir(parents=True)
-        for directory in ['crates', 'contracts', 'workers', 'tests/proof-pipeline', 'tooling']:
-            shutil.copytree(ROOT / directory, checkout / directory,
-                            ignore=shutil.ignore_patterns('target', '__pycache__'))
-        (checkout / '.tools').symlink_to(ROOT / '.tools', target_is_directory=True)
-        (checkout / '.cache').mkdir()
-        (checkout / '.cache/cargo').symlink_to(ROOT / '.cache/cargo', target_is_directory=True)
         # A source-only copy has no Git metadata; the worker manifest must say so.
-        for command in ['./tooling/build-proof-worker.sh', './tooling/build-proof-contracts.sh']:
+        for command in ['./tooling/build-proof-worker.sh', './tooling/build-settlement-worker.sh', './tooling/build-proof-contracts.sh']:
             subprocess.run([command], cwd=checkout, check=True)
-        manifest = json.loads((checkout / 'target/proof-worker-manifest.json').read_text())
-        if manifest['source_base_revision'] is not None or manifest['source_tree_dirty'] is not None:
-            raise SystemExit('Source-only provenance incorrectly claims a Git revision')
+        for name in ['proof-worker-manifest.json', 'settlement-worker-manifest.json']:
+            manifest = json.loads((checkout / 'target' / name).read_text())
+            if manifest['source_base_revision'] is not None or manifest['source_tree_dirty'] is not None:
+                raise SystemExit('Source-only provenance incorrectly claims a Git revision')
         digests[str(checkout.relative_to(ROOT))] = {
             artifact: hashlib.sha256((checkout / 'target' / artifact).read_bytes()).hexdigest()
             for artifact in ARTIFACTS

@@ -15,6 +15,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGES = {
+    'settlement': ['workers/settlement'],
     'worker': ['workers/collateral-proof', 'crates/proof-protocol', 'crates/collateral-proof'],
     'controller': ['contracts/controller', 'crates/proof-protocol', 'crates/collateral-proof'],
     'services': ['tests/proof-pipeline/contracts/services'],
@@ -27,7 +28,22 @@ def sha(path):
 
 def main():
     kind = sys.argv[1]
-    members = PACKAGES[kind]
+    # Include every local path dependency transitively, including dependencies of
+    # dependencies. Preserve the original standalone graph and package manifests.
+    members = list(PACKAGES[kind])
+    index = 0
+    while index < len(members):
+        member = members[index]
+        original = (ROOT / member / 'Cargo.toml').read_text()
+        for relative in re.findall(r'path\s*=\s*"([^"\n]+)"', original):
+            dependency = ((ROOT / member) / relative).resolve()
+            try:
+                package = str(dependency.relative_to(ROOT))
+            except ValueError:
+                raise SystemExit('Path dependency outside source root: ' + str(dependency))
+            if package not in members:
+                members.append(package)
+        index += 1
     stage = ROOT / '.cache/proof-artifact-sources' / kind
     if '--verify' in sys.argv:
         evidence = json.loads((stage / 'derivation.json').read_text())
