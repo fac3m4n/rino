@@ -1,5 +1,5 @@
 /** Controlled public RPC fixtures; no public chain execution or proof authentication. */
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi, beforeEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,7 +7,16 @@ import { join } from "node:path";
 import { PublicCoordinator } from "../src/public.ts";
 import type { State } from "../src/api.ts";
 
-afterEach(() => vi.restoreAllMocks());
+beforeEach(() =>
+  vi.stubEnv(
+    "ALCHEMY_SEPOLIA_RPC_URL",
+    "https://eth-sepolia.g.alchemy.com/v2/proofcredit-synthetic-key",
+  ),
+);
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 async function fixture(balance = "1") {
   const dir = await mkdtemp(join(tmpdir(), "proofcredit-public-preparation-"));
   const manifest = join(dir, "manifest.json");
@@ -50,12 +59,18 @@ async function fixture(balance = "1") {
   } as unknown as State;
   let latest = 100n,
     finals = [100n, 100n],
-    capturedBalance = balance;
+    capturedBalance = balance,
+    disagree = false;
   const balances = new Map<bigint, string>([[100n, balance]]);
   vi.spyOn(adapter, "state").mockImplementation(async () => state);
   vi.spyOn(globalThis, "fetch").mockImplementation(async (url, options) => {
     const q = JSON.parse(String(options?.body));
     const provider = String(url).includes("publicnode") ? 0 : 1;
+    expect(String(url)).toBe(
+      provider === 0
+        ? "https://ethereum-sepolia-rpc.publicnode.com/"
+        : "https://eth-sepolia.g.alchemy.com/v2/proofcredit-synthetic-key",
+    );
     let result;
     if (q.method === "eth_getBlockByNumber") {
       const number =
@@ -70,6 +85,7 @@ async function fixture(balance = "1") {
         stateRoot: `0x${(number + 1000n).toString(16).padStart(64, "0")}`,
         timestamp: `0x${Math.floor(Date.now() / 1000).toString(16)}`,
       };
+      if (disagree && provider === 1) result.stateRoot = "0x" + "ee".repeat(32);
     } else if (q.method === "eth_getProof") {
       const number = BigInt(q.params[2]);
       capturedBalance = balances.get(number)!;
@@ -85,6 +101,9 @@ async function fixture(balance = "1") {
     adapter,
     state,
     capturedBalance: () => capturedBalance,
+    disagree() {
+      disagree = true;
+    },
     advance(number: bigint, balance: string, finalized: bigint[]) {
       latest = number;
       finals = finalized;
@@ -95,6 +114,11 @@ async function fixture(balance = "1") {
     prove: () => adapter.action({ action: "prove", role: "borrower" }),
   };
 }
+it("rejects PublicNode and Alchemy canonical header disagreement before asking for a wallet job", async () => {
+  const f = await fixture();
+  f.disagree();
+  await expect(f.prove()).rejects.toThrow("public checkpoint quorum mismatch");
+});
 it("replaces an inadequate collateral capture after partial then sufficient topup and retains its adequate finality target through gifts", async () => {
   const f = await fixture();
   const first = await f.prove();

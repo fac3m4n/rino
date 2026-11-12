@@ -1,5 +1,5 @@
 /** Controlled RPC/SDK fixtures only; no public deployment or transaction. */
-import { it, expect, vi, afterEach } from "vitest";
+import { it, expect, vi, afterEach, beforeEach } from "vitest";
 import { mkdtemp, writeFile, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -9,7 +9,16 @@ import { keccak256, parseTransaction, serializeTransaction } from "viem";
 import { PublicCoordinator } from "../src/public.ts";
 import type { State, SignedTransaction } from "../src/api.ts";
 
-afterEach(() => vi.restoreAllMocks());
+beforeEach(() =>
+  vi.stubEnv(
+    "ALCHEMY_SEPOLIA_RPC_URL",
+    "https://eth-sepolia.g.alchemy.com/v2/proofcredit-synthetic-key",
+  ),
+);
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 const recipient = "0x1111111111111111111111111111111111111111" as const;
 async function fixture() {
   const dir = await mkdtemp(join(tmpdir(), "proofcredit-public-settlement-"));
@@ -72,6 +81,11 @@ async function fixture() {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (url, options) => {
     const q = JSON.parse(String(options?.body)),
       provider = String(url).includes("publicnode") ? 0 : 1;
+    expect(String(url)).toBe(
+      provider === 0
+        ? "https://ethereum-sepolia-rpc.publicnode.com/"
+        : "https://eth-sepolia.g.alchemy.com/v2/proofcredit-synthetic-key",
+    );
     calls.push({ provider, method: q.method, params: q.params });
     let result: unknown;
     if (q.method === "eth_getBlockByNumber")

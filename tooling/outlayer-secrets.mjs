@@ -214,7 +214,7 @@ function outputPath(root, value) {
     throw new Error();
   const ignore = readFileSync(join(root, ".gitignore"), "utf8")
     .split(/\r?\n/)
-    .map((line) => line.trim());
+    .map((line) => line.trimEnd());
   const rule = Math.max(
     ignore.lastIndexOf(".local/"),
     ignore.lastIndexOf("/.local/"),

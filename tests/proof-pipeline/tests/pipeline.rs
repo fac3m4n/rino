@@ -11,7 +11,7 @@ use tokio::task::JoinHandle;
 
 const VAULT: &str = "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf";
 const DEPOSIT: &str = "50000000000000000000000";
-const HASH: &str = "be818d821f076d5e1dbf3650b03811b7658c85b14fd5c2fa7abce4ac87184c69";
+const HASH: &str = "fbd5e0664aa18b3fe11f07d383cfbb73ef9eeff9d7747f623b33f09c4570f96e";
 const URL: &str = "https://example.invalid/proof-worker.wasm";
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 

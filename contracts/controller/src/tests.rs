@@ -36,7 +36,7 @@ fn config() -> Config {
         executor: id("executor.testnet"),
         mpc: id("mpc.testnet"),
         wasm_url: "https://example.com/worker.wasm".into(),
-        wasm_sha256: "be818d821f076d5e1dbf3650b03811b7658c85b14fd5c2fa7abce4ac87184c69".into(),
+        wasm_sha256: "fbd5e0664aa18b3fe11f07d383cfbb73ef9eeff9d7747f623b33f09c4570f96e".into(),
         operation_deposit: U128(DEPOSIT),
         network: NetworkMode::Sandbox {
             mpc: id("mpc.testnet"),
@@ -313,7 +313,7 @@ fn proof_call_pins_policy_source_resources_deposit_and_exact_input() {
     let args = &calls()[0].1;
     assert_eq!(
         args["source"],
-        json!({"WasmUrl":{"url":"https://example.com/worker.wasm","hash":"be818d821f076d5e1dbf3650b03811b7658c85b14fd5c2fa7abce4ac87184c69","build_target":"wasm32-wasip2"}})
+        json!({"WasmUrl":{"url":"https://example.com/worker.wasm","hash":"fbd5e0664aa18b3fe11f07d383cfbb73ef9eeff9d7747f623b33f09c4570f96e","build_target":"wasm32-wasip2"}})
     );
     assert_eq!(
         args["resource_limits"],
@@ -329,6 +329,30 @@ fn proof_call_pins_policy_source_resources_deposit_and_exact_input() {
     panics(|| {
         drop(c.request_proof(bundle()));
     });
+}
+#[test]
+fn testnet_initial_proof_derives_fixed_secret_profile_from_current_controller() {
+    for account in ["controller.testnet", "fresh-controller.testnet"] {
+        context("borrower.testnet", 1000, vec![]);
+        let mut ctx = VMContextBuilder::new();
+        ctx.current_account_id(id(account))
+            .predecessor_account_id(id("borrower.testnet"))
+            .block_timestamp(1000 * 1_000_000_000)
+            .prepaid_gas(Gas::from_tgas(300));
+        testing_env!(ctx.build());
+        let mut c = controller(Status::Funding);
+        c.config.network = NetworkMode::NearTestnet;
+        c.config.executor = id("outlayer.testnet");
+        drop(c.request_proof(bundle()));
+        let args = &calls()[0].1;
+        assert_eq!(
+            args["secrets_ref"],
+            json!({"profile":"proofcredit-rpc-v1","account_id":account})
+        );
+        assert_eq!(args["payer_account_id"], account);
+        assert!(args["params"].is_null());
+        assert_eq!(args.as_object().unwrap().len(), 7);
+    }
 }
 #[test]
 fn oversized_serialized_input_rejects_without_reserving_or_spending() {

@@ -8,7 +8,7 @@ fn config() -> LoanConfig {
         borrower_recipient: "0x1111111111111111111111111111111111111111".into(),
         lender_recipient: "0x2222222222222222222222222222222222222222".into(),
         settlement_wasm_url: "https://example.com/settlement.wasm".into(),
-        settlement_wasm_sha256: "552ddd26f2a0caaaad9c4e06ec08e24b24ab2c54c57d5b5b1991b03277f639a8"
+        settlement_wasm_sha256: "a0efb7959a1f227d7e81579820bf3b3cec9804d94e5095fa6a90b301052e19c7"
             .into(),
     }
 }

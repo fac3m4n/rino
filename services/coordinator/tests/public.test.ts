@@ -1,11 +1,21 @@
-import { it, expect, vi, afterEach } from "vitest";
+import { it, expect, vi, afterEach, beforeEach } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PublicCoordinator } from "../src/public.ts";
 import { PINS } from "../src/local.ts";
 import type { State } from "../src/api.ts";
-afterEach(() => vi.restoreAllMocks());
+import { createApp } from "../src/server.ts";
+beforeEach(() =>
+  vi.stubEnv(
+    "ALCHEMY_SEPOLIA_RPC_URL",
+    "https://eth-sepolia.g.alchemy.com/v2/proofcredit-synthetic-key",
+  ),
+);
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 const deployment = {
   version: 2,
   controllerId: "controller.testnet",
@@ -24,6 +34,27 @@ async function adapter(extra: Record<string, unknown> = {}) {
   await writeFile(p, JSON.stringify({ ...deployment, ...extra }));
   return PublicCoordinator.fromFile(p);
 }
+it.each([
+  undefined,
+  "",
+  "https://eth-mainnet.g.alchemy.com/v2/secret-test-key",
+  "https://eth-sepolia.g.alchemy.com/v2/bad%20key",
+])(
+  "rejects absent or invalid runtime credentials before public construction (%s)",
+  async (value) => {
+    vi.stubEnv("ALCHEMY_SEPOLIA_RPC_URL", value);
+    await expect(adapter()).rejects.toThrow("Alchemy");
+    await expect(
+      PublicCoordinator.fromFile(undefined),
+    ).resolves.toBeUndefined();
+  },
+);
+it("keeps local construction and public imports credential-free", async () => {
+  vi.stubEnv("ALCHEMY_SEPOLIA_RPC_URL", undefined);
+  const { LocalCoordinator } = await import("../src/local.ts");
+  expect(LocalCoordinator).toBeDefined();
+  await expect(PublicCoordinator.fromFile(undefined)).resolves.toBeUndefined();
+});
 it("public manifest rejects financial key material and non-testnet identities", async () => {
   await expect(adapter({ signer: "must-never-be-loaded" })).rejects.toThrow(
     "schema",
@@ -70,6 +101,12 @@ it("public readiness fails closed on wrong provider network or changed deployed 
         ),
     );
   expect(await a.readiness()).toEqual([]);
+  expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
+    "https://ethereum-sepolia-rpc.publicnode.com/",
+    "https://eth-sepolia.g.alchemy.com/v2/proofcredit-synthetic-key",
+  ]);
+  expect(JSON.stringify(a.deployment)).not.toContain("synthetic-key");
+  expect(JSON.stringify(a)).not.toContain("synthetic-key");
   fetch.mockImplementation(
     async () =>
       new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: "0x1" })),
@@ -85,6 +122,51 @@ it("public readiness fails closed on wrong provider network or changed deployed 
     code_hash: "22222222222222222222222222222222",
   } as any);
   expect((await a.readiness()).join()).toContain("code hash");
+});
+it("redacts credential-bearing provider exceptions from action and readiness errors", async () => {
+  const a = (await adapter())!;
+  vi.spyOn(a, "state").mockResolvedValue({
+    ready: true,
+    market: { vault: "0x3333333333333333333333333333333333333333", terms: {} },
+    settlement: {},
+  } as unknown as State);
+  vi.spyOn(globalThis, "fetch").mockRejectedValue(
+    new Error(
+      "transport https://eth-sepolia.g.alchemy.com/v2/proofcredit-synthetic-key",
+    ),
+  );
+  await expect(a.action({ action: "prove", role: "borrower" })).rejects.toThrow(
+    "public provider unavailable",
+  );
+});
+it("keeps runtime credentials out of config and unavailable state API responses", async () => {
+  const a = (await adapter())!;
+  vi.spyOn(a.provider, "viewNodeStatus").mockRejectedValue(
+    new Error("https://eth-sepolia.g.alchemy.com/v2/proofcredit-synthetic-key"),
+  );
+  vi.spyOn(a.provider, "viewAccount").mockRejectedValue(
+    new Error("unavailable"),
+  );
+  vi.spyOn(a, "view").mockRejectedValue(new Error("unavailable"));
+  vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("unavailable"));
+  const app = await createApp({
+    publicEngine: a,
+    origin: "http://127.0.0.1:3000",
+  });
+  try {
+    for (const url of ["/api/config", "/api/state"]) {
+      const response = await app.inject({
+        method: "GET",
+        url,
+        headers: { host: "127.0.0.1:3000" },
+      });
+      expect(response.json().ready).toBe(false);
+      expect(response.body).not.toContain("synthetic-key");
+      expect(response.body).not.toContain("alchemy.com");
+    }
+  } finally {
+    await app.close();
+  }
 });
 it("public financial actions require the fixed participant wallet and never send a NEAR transaction", async () => {
   const a = (await adapter())!;

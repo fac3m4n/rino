@@ -442,7 +442,7 @@ fn canonical_views_expose_exact_string_money_and_only_verified_current_candidate
     assert_eq!(market["terms"]["principal_units"], "100000000");
     assert_eq!(
         market["settlement_wasm_sha256"],
-        "552ddd26f2a0caaaad9c4e06ec08e24b24ab2c54c57d5b5b1991b03277f639a8"
+        "a0efb7959a1f227d7e81579820bf3b3cec9804d94e5095fa6a90b301052e19c7"
     );
     assert_eq!(market["terms"]["term_seconds"], "120");
     assert_eq!(market["debt_units"], "0");
@@ -770,7 +770,7 @@ fn settlement_module_and_digest_are_pinned_and_confirmation_timeout_keeps_signed
     );
     assert_eq!(
         args["source"]["WasmUrl"]["hash"],
-        "552ddd26f2a0caaaad9c4e06ec08e24b24ab2c54c57d5b5b1991b03277f639a8"
+        "a0efb7959a1f227d7e81579820bf3b3cec9804d94e5095fa6a90b301052e19c7"
     );
     assert!(args["secrets_ref"].is_null() && args["params"].is_null());
     assert_eq!(
@@ -809,6 +809,41 @@ fn settlement_module_and_digest_are_pinned_and_confirmation_timeout_keeps_signed
     context("controller.testnet", 1601, vec![PromiseResult::Failed]);
     assert!(!c.on_settlement_result(U64(old)));
     assert_eq!(c.get_signed_transactions().len(), 1);
+}
+
+#[test]
+fn testnet_settlement_derives_fixed_secret_profile_from_current_controller() {
+    for account in ["controller.testnet", "fresh-controller.testnet"] {
+        let mut c = cancelled();
+        c.config.network = NetworkMode::NearTestnet;
+        c.config.executor = id("outlayer.testnet");
+        let mut ctx = near_sdk::test_utils::VMContextBuilder::new();
+        ctx.current_account_id(id(account))
+            .predecessor_account_id(id("borrower.testnet"))
+            .block_timestamp(1000 * 1_000_000_000)
+            .prepaid_gas(near_sdk::Gas::from_tgas(300));
+        near_sdk::testing_env!(ctx.build());
+        drop(c.prepare_settlement(bundle(0, 1_000_000), U128(1)));
+        let args = get_created_receipts()
+            .iter()
+            .flat_map(|r| &r.actions)
+            .find_map(|a| match a {
+                MockAction::FunctionCallWeight {
+                    method_name, args, ..
+                } if method_name == b"request_execution" => {
+                    Some(serde_json::from_slice::<serde_json::Value>(args).unwrap())
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            args["secrets_ref"],
+            serde_json::json!({"profile":"proofcredit-rpc-v1","account_id":account})
+        );
+        assert_eq!(args["payer_account_id"], account);
+        assert!(args["params"].is_null());
+        assert_eq!(args.as_object().unwrap().len(), 7);
+    }
 }
 #[test]
 fn closed_participants_can_unregister_and_reregister_after_their_obligations_clear() {

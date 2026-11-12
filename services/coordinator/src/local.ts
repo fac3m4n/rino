@@ -31,11 +31,11 @@ import type {
 } from "./api.ts";
 export const PINS = {
   collateral:
-    "be818d821f076d5e1dbf3650b03811b7658c85b14fd5c2fa7abce4ac87184c69",
+    "fbd5e0664aa18b3fe11f07d383cfbb73ef9eeff9d7747f623b33f09c4570f96e",
   settlement:
-    "552ddd26f2a0caaaad9c4e06ec08e24b24ab2c54c57d5b5b1991b03277f639a8",
+    "a0efb7959a1f227d7e81579820bf3b3cec9804d94e5095fa6a90b301052e19c7",
   controller:
-    "6c801cb682063af2ffb6e174ca4391722f57ee01663b08199774245c383f3da6",
+    "d264dea9f45c12ca271654a5acd3949f6e7a7fcc7291f771bba87662cdc2a05b",
 };
 const MOCK_MODULE = resolve(
   ROOT,

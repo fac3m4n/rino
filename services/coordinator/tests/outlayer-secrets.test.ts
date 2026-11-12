@@ -355,6 +355,14 @@ function cliFixture(mode = "ok") {
   return { root, run };
 }
 describe("CLI with isolated synthetic credentials", () => {
+  it("rejects a leading-space ignore rule before requesting encryption material", () => {
+    const { root, run } = cliFixture();
+    writeFileSync(join(root, ".gitignore"), " .local/\n");
+    const result = run();
+    expect(result.status).toBe(1);
+    expect(existsSync(join(root, "request.json"))).toBe(false);
+    expect(result.stdout + result.stderr).not.toContain(testKey);
+  });
   it("does nothing on import even without a credential file", () => {
     const { root, run } = cliFixture();
     rmSync(join(root, ".local/rpc/sepolia.env"));

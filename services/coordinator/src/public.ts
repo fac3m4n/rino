@@ -1,4 +1,4 @@
-/** Public testnet adapter. This module never constructs a signer or loads a key. */
+/** Public testnet adapter. This module never constructs a signer; RPC credentials load only in public construction. */
 import { JsonRpcProvider } from "near-api-js";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -7,6 +7,7 @@ import { ROOT } from "./processes.ts";
 import { Journal, SerialQueue, verifyRelay } from "./safety.ts";
 import { PINS } from "./local.ts";
 import { collateralSufficient } from "./collateral.ts";
+import { parseAlchemyEndpoint } from "../../../tooling/outlayer-secrets.mjs";
 import type {
   ActionRequest,
   ActionResult,
@@ -18,10 +19,6 @@ import type {
   Terms,
   WalletAction,
 } from "./api.ts";
-const URLS = [
-  "https://ethereum-sepolia-rpc.publicnode.com",
-  "https://public.1rpc.io/sepolia",
-] as const;
 interface Deployment {
   version: 2;
   controllerId: string;
@@ -35,7 +32,7 @@ interface Deployment {
   settlementUrl: string;
 }
 async function ethereum(
-  url: (typeof URLS)[number],
+  url: string,
   method: string,
   params: unknown[],
 ): Promise<any> {
@@ -51,32 +48,36 @@ async function ethereum(
     ].includes(method)
   )
     throw Error("public RPC method denied");
-  const r = await fetch(url, {
-    method: "POST",
-    redirect: "error",
-    signal: AbortSignal.timeout(15000),
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-  if (!r.ok) throw Error(`public provider HTTP ${r.status}`);
-  const reader = r.body!.getReader();
-  const parts: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const next = await reader.read();
-    if (next.done) break;
-    size += next.value.length;
-    if (size > 262144) {
-      await reader.cancel();
-      throw Error("public RPC response bound");
+  try {
+    const r = await fetch(url, {
+      method: "POST",
+      redirect: "error",
+      signal: AbortSignal.timeout(15000),
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    });
+    if (!r.ok) throw Error(`public provider HTTP ${r.status}`);
+    const reader = r.body!.getReader();
+    const parts: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      size += next.value.length;
+      if (size > 262144) {
+        await reader.cancel();
+        throw Error("public RPC response bound");
+      }
+      parts.push(next.value);
     }
-    parts.push(next.value);
+    const body = Buffer.concat(parts).toString();
+    const v = JSON.parse(body);
+    if (v.error || v.result === undefined)
+      throw Error("public provider rejected required proof/receipt query");
+    return v.result;
+  } catch {
+    throw Error("public provider unavailable or response rejected");
   }
-  const body = Buffer.concat(parts).toString();
-  const v = JSON.parse(body);
-  if (v.error || v.result === undefined)
-    throw Error("public provider rejected required proof/receipt query");
-  return v.result;
 }
 export class PublicCoordinator {
   readonly queue = new SerialQueue(4);
@@ -84,11 +85,15 @@ export class PublicCoordinator {
     url: "https://rpc.testnet.near.org",
   });
   private waiting: string = "";
+  readonly #urls: readonly [string, string];
   private constructor(
     readonly deployment: Deployment,
     readonly journal: Journal,
     readonly directory: string,
-  ) {}
+    alchemyUrl: string,
+  ) {
+    this.#urls = ["https://ethereum-sepolia-rpc.publicnode.com/", alchemyUrl];
+  }
   static async fromFile(
     path: string | undefined,
   ): Promise<PublicCoordinator | undefined> {
@@ -139,6 +144,9 @@ export class PublicCoordinator {
     }
     if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(d.controllerCodeHash))
       throw Error("public controller code hash required");
+    const { url: alchemyUrl } = parseAlchemyEndpoint(
+      process.env.ALCHEMY_SEPOLIA_RPC_URL,
+    );
     const directory = resolve(
       ROOT,
       ".cache/public-coordinator",
@@ -149,6 +157,7 @@ export class PublicCoordinator {
       d,
       await Journal.open(resolve(directory, "journal.json")),
       directory,
+      alchemyUrl,
     );
   }
   async view<T = any>(method: string): Promise<T> {
@@ -166,7 +175,7 @@ export class PublicCoordinator {
         this.provider.viewAccount({ accountId: this.deployment.controllerId }),
         this.view("get_config"),
         this.view<Market>("get_market"),
-        Promise.all(URLS.map((u) => ethereum(u, "eth_chainId", []))),
+        Promise.all(this.#urls.map((u) => ethereum(u, "eth_chainId", []))),
       ]);
       const errors: string[] = [];
       if (status.chain_id !== "testnet" || chains.some((x) => x !== "0xaa36a7"))
@@ -215,17 +224,20 @@ export class PublicCoordinator {
     let eth: State["ethereum"] = null;
     if (market.vault) {
       const values = await Promise.all([
-        ethereum(URLS[0], "eth_getBalance", [market.vault, "latest"]),
-        ethereum(URLS[0], "eth_getTransactionCount", [market.vault, "latest"]),
-        ethereum(URLS[0], "eth_getBalance", [
+        ethereum(this.#urls[0], "eth_getBalance", [market.vault, "latest"]),
+        ethereum(this.#urls[0], "eth_getTransactionCount", [
+          market.vault,
+          "latest",
+        ]),
+        ethereum(this.#urls[0], "eth_getBalance", [
           market.borrower_recipient,
           "latest",
         ]),
-        ethereum(URLS[0], "eth_getBalance", [
+        ethereum(this.#urls[0], "eth_getBalance", [
           market.lender_recipient,
           "latest",
         ]),
-        ethereum(URLS[0], "eth_getBlockByNumber", ["finalized", false]),
+        ethereum(this.#urls[0], "eth_getBlockByNumber", ["finalized", false]),
       ]);
       eth = {
         vaultBalanceWei: BigInt(values[0]).toString(),
@@ -295,7 +307,9 @@ export class PublicCoordinator {
       now - BigInt(captured.bundle.block_timestamp) > 3600n
     ) {
       const latest = await Promise.all(
-        URLS.map((u) => ethereum(u, "eth_getBlockByNumber", ["latest", false])),
+        this.#urls.map((u) =>
+          ethereum(u, "eth_getBlockByNumber", ["latest", false]),
+        ),
       );
       const number = latest
         .map((x) => BigInt(x.number))
@@ -306,7 +320,9 @@ export class PublicCoordinator {
       }
       const tag = `0x${number.toString(16)}`;
       const headers = await Promise.all(
-        URLS.map((u) => ethereum(u, "eth_getBlockByNumber", [tag, false])),
+        this.#urls.map((u) =>
+          ethereum(u, "eth_getBlockByNumber", [tag, false]),
+        ),
       );
       if (
         headers.some((header) => BigInt(header.number) !== number) ||
@@ -315,7 +331,7 @@ export class PublicCoordinator {
       )
         throw Error("public checkpoint quorum mismatch");
       const b = headers[0],
-        p = await ethereum(URLS[0], "eth_getProof", [vault, [], tag]);
+        p = await ethereum(this.#urls[0], "eth_getProof", [vault, [], tag]);
       const base = {
         block_number: number.toString(),
         block_hash: b.hash,
@@ -327,7 +343,7 @@ export class PublicCoordinator {
             ...base,
             vault_account_proof: p.accountProof,
             beneficiary_account_proof: (
-              await ethereum(URLS[0], "eth_getProof", [to, [], tag])
+              await ethereum(this.#urls[0], "eth_getProof", [to, [], tag])
             ).accountProof,
           }
         : { ...base, account_proof: p.accountProof };
@@ -339,7 +355,7 @@ export class PublicCoordinator {
       await writeFile(file, JSON.stringify(captured), { mode: 0o600 });
     }
     const finals = await Promise.all(
-      URLS.map((u) =>
+      this.#urls.map((u) =>
         ethereum(u, "eth_getBlockByNumber", ["finalized", false]),
       ),
     );
@@ -354,7 +370,7 @@ export class PublicCoordinator {
     // Recheck canonical header immediately before asking the wallet to create the job.
     const tag = `0x${BigInt(captured.bundle.block_number).toString(16)}`;
     const headers = await Promise.all(
-      URLS.map((u) => ethereum(u, "eth_getBlockByNumber", [tag, false])),
+      this.#urls.map((u) => ethereum(u, "eth_getBlockByNumber", [tag, false])),
     );
     if (
       headers.some(
@@ -440,7 +456,7 @@ export class PublicCoordinator {
                 ? m.lender_recipient
                 : m.borrower_recipient;
             const latest = await Promise.all(
-              URLS.map((u) =>
+              this.#urls.map((u) =>
                 ethereum(u, "eth_getBlockByNumber", ["latest", false]),
               ),
             );
@@ -474,7 +490,7 @@ export class PublicCoordinator {
           let receipt: any = null;
           for (const candidate of candidates) {
             const observed = await Promise.all(
-              URLS.map((u) =>
+              this.#urls.map((u) =>
                 ethereum(u, "eth_getTransactionReceipt", [candidate.hash]),
               ),
             );
@@ -491,7 +507,8 @@ export class PublicCoordinator {
             await this.journal.relay(
               candidate.hash,
               candidate.raw,
-              async (raw) => ethereum(URLS[0], "eth_sendRawTransaction", [raw]),
+              async (raw) =>
+                ethereum(this.#urls[0], "eth_sendRawTransaction", [raw]),
             );
             throw Error(
               "Authorized raw transaction relayed; await receipt and repeat settlement; no new nonce authorized",
