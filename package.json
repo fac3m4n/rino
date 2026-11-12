@@ -16,7 +16,10 @@
     "dev:public": "tsx services/coordinator/src/server.ts",
     "build": "npm run typecheck && npm run build:web",
     "test:web": "vitest run apps/web/tests",
-    "test:browser": "playwright test --config tests/browser/playwright.config.ts"
+    "test:browser": "playwright test --config tests/browser/playwright.config.ts",
+    "check": "./tooling/check.sh",
+    "setup:cached": "./tooling/setup-local.sh --cached",
+    "setup:download": "./tooling/setup-local.sh --download"
   },
   "devDependencies": {
     "@playwright/test": "1.65.0",
@@ -25,5 +28,10 @@
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vitest": "5.1.0"
+  },
+  "packageManager": "npm@12.2.2",
+  "engines": {
+    "node": "24.19.0",
+    "npm": "12.2.2"
   }
 }
