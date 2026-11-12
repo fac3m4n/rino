@@ -51,7 +51,7 @@ test.setTimeout(30000);
 test.beforeEach(async ({ page }) => {
   await page.clock.install({ time: new Date("2026-11-12T00:00:00Z") });
   await page.clock.pauseAt(new Date("2026-11-12T00:00:01Z"));
-  await page.route("**/api/config", (r) => r.fulfill({ json: configFixture }));
+  await page.route("**/api/config*", (r) => r.fulfill({ json: configFixture }));
 });
 test("@async late pre-action snapshot cannot overwrite a newer authenticated state", async ({
   page,
@@ -60,7 +60,7 @@ test("@async late pre-action snapshot cannot overwrite a newer authenticated sta
   let receipts: Receipt[] = [];
   let holdNext = false;
   let held: Route | undefined;
-  await page.route("**/api/state", async (route) => {
+  await page.route("**/api/state*", async (route) => {
     const captured = current;
     if (holdNext && !held) {
       held = route;
@@ -127,7 +127,7 @@ test("@async timed-out mutation remains uncertain and never retries while refres
     posts = 0;
   let current = stateFixture;
   let receipts: Receipt[] = [];
-  await page.route("**/api/state", (r) =>
+  await page.route("**/api/state*", (r) =>
     stalled ? undefined : r.fulfill({ json: current }),
   );
   await page.route("**/api/receipts", (r) =>
@@ -176,7 +176,7 @@ test("@async completed action with stalled final refresh pauses controls until a
   page,
 }) => {
   let stalled = false;
-  await page.route("**/api/state", (r) =>
+  await page.route("**/api/state*", (r) =>
     stalled ? undefined : r.fulfill({ json: stateFixture }),
   );
   await page.route("**/api/receipts", (r) => r.fulfill({ json: [] }));
@@ -228,7 +228,7 @@ test("@async lender funding remains reachable with borrower ETH already deposite
       borrowed_at: null,
     },
   };
-  await page.route("**/api/state", (r) => r.fulfill({ json: offered }));
+  await page.route("**/api/state*", (r) => r.fulfill({ json: offered }));
   await page.route("**/api/receipts", (r) => r.fulfill({ json: [] }));
   await page.goto("/");
   await page.getByRole("button", { name: "Lender", exact: true }).click();
@@ -240,7 +240,7 @@ test("@async lender funding remains reachable with borrower ETH already deposite
 test("@async public lender can find liquidity funding after borrower ETH deposit", async ({
   page,
 }) => {
-  await page.route("**/api/config", (r) =>
+  await page.route("**/api/config*", (r) =>
     r.fulfill({
       json: {
         ...configFixture,
@@ -249,7 +249,7 @@ test("@async public lender can find liquidity funding after borrower ETH deposit
       },
     }),
   );
-  await page.route("**/api/state", (r) =>
+  await page.route("**/api/state*", (r) =>
     r.fulfill({
       json: {
         ...stateFixture,
@@ -284,7 +284,7 @@ test("@continue never-received POST permits deliberate continuation only after f
     posts = 0;
   let current = stateFixture;
   let receipts: Receipt[] = [];
-  await page.route("**/api/config", (r) =>
+  await page.route("**/api/config*", (r) =>
     online
       ? r.fulfill({
           json: {
@@ -297,7 +297,7 @@ test("@continue never-received POST permits deliberate continuation only after f
         })
       : undefined,
   );
-  await page.route("**/api/state", (r) =>
+  await page.route("**/api/state*", (r) =>
     online
       ? r.fulfill({ json: { ...current, ready: stateReady, busy } })
       : undefined,
@@ -350,8 +350,8 @@ test("@continue never-received POST permits deliberate continuation only after f
   await expect(repayButton).toBeDisabled();
   expect(posts).toBe(1);
   const checked = async () => {
-    const response = page.waitForResponse((r) =>
-      r.url().endsWith("/api/state"),
+    const response = page.waitForResponse(
+      (r) => new URL(r.url()).pathname === "/api/state",
     );
     await page
       .getByRole("button", { name: "Refresh chain state", exact: true })

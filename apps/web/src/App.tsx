@@ -44,6 +44,7 @@ import {
   type UnconfirmedAction,
 } from "./snapshots";
 import { useWallets } from "./wallets";
+import { ReadPoller, pollingPending } from "./polling";
 import { ActionFailure } from "./outcomes";
 import {
   collateralShortfall,
@@ -148,6 +149,7 @@ export default function App() {
   const inflight = useRef(false);
   const snapshots = useRef<SnapshotLane<Snapshot> | null>(null);
   const latest = useRef<Snapshot | null>(null);
+  const poller = useRef<ReadPoller | null>(null);
   const unknownAction = useRef<UnconfirmedAction | null>(null);
   const networkPausedRef = useRef(false);
   const [networkPaused, setNetworkPaused] = useState(false);
@@ -164,17 +166,17 @@ export default function App() {
         : reason,
     );
   };
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (options: { fresh?: boolean } = {}) => {
     if (!snapshots.current) return false;
-    return snapshots.current.refresh();
+    return snapshots.current.refresh(options);
   }, []);
   useEffect(() => {
     let active = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const lane = new SnapshotLane<Snapshot>(
-      (signal) => snapshot({ signal }),
+      (signal, options) => snapshot({ ...options, signal }),
       (data) => {
         latest.current = data;
+        poller.current?.delivered(data.config.ready && data.state.ready);
         setConfig(data.config);
         setState(data.state);
         setReceipts(data.receipts);
@@ -203,24 +205,48 @@ export default function App() {
       },
     );
     snapshots.current = lane;
-    const poll = async () => {
-      try {
-        if (active && !inflight.current) await lane.refresh();
-      } catch (error) {
-        if (active)
-          pauseNetwork(
-            error instanceof Error
-              ? error.message
-              : "Unable to refresh chain state.",
-          );
-      } finally {
-        if (active) timer = setTimeout(() => void poll(), 2500);
-      }
-    };
-    void poll();
+    const automatic = new ReadPoller({
+      read: async () => {
+        if (inflight.current) return;
+        try {
+          await lane.refresh();
+        } catch (error) {
+          if (active) {
+            automatic.delivered(false);
+            pauseNetwork(
+              error instanceof Error
+                ? error.message
+                : "Unable to refresh chain state.",
+            );
+          }
+        }
+      },
+      mode: () => latest.current?.config.mode ?? "public",
+      pending: () =>
+        pollingPending(
+          latest.current?.state,
+          inflight.current,
+          !!unknownAction.current,
+        ),
+      available: () =>
+        document.visibilityState !== "hidden" && navigator.onLine,
+      subscribe: (wake) => {
+        document.addEventListener("visibilitychange", wake);
+        window.addEventListener("online", wake);
+        window.addEventListener("offline", wake);
+        return () => {
+          document.removeEventListener("visibilitychange", wake);
+          window.removeEventListener("online", wake);
+          window.removeEventListener("offline", wake);
+        };
+      },
+    });
+    poller.current = automatic;
+    automatic.start();
     return () => {
       active = false;
-      clearTimeout(timer);
+      automatic.dispose();
+      if (poller.current === automatic) poller.current = null;
       lane.dispose();
       if (snapshots.current === lane) snapshots.current = null;
     };
@@ -255,8 +281,9 @@ export default function App() {
     if (!lane || pending) return;
     setRefreshing(true);
     try {
-      await lane.refresh();
+      await lane.refresh({ fresh: true });
     } catch (error) {
+      poller.current?.delivered(false);
       if (snapshots.current === lane)
         pauseNetwork(
           error instanceof Error
@@ -289,13 +316,23 @@ export default function App() {
       setError(blocked);
       return;
     }
-    const before = latest.current ?? { config, state, receipts };
+    let before = latest.current ?? { config, state, receipts };
     const token = lane.invalidate();
     inflight.current = true;
+    poller.current?.changed();
     setPending(action);
     setError("");
     setMessage("");
     try {
+      await lane.refresh({ fresh: true });
+      if (!lane.isCurrent(token)) return;
+      const current = latest.current;
+      if (!current) throw Error("Latest chain state is unavailable.");
+      before = current;
+      const { config, state } = current;
+      const market = state.market;
+      const blocked = actionGuard(action, config, state, role, wallets);
+      if (blocked) throw Error(blocked);
       if (
         config.mode === "public" &&
         action === "fund" &&
@@ -352,9 +389,10 @@ export default function App() {
     } finally {
       if (lane.isCurrent(token)) {
         try {
-          await refresh();
+          await refresh({ fresh: true });
         } catch (error) {
           if (lane.isCurrent(token)) {
+            poller.current?.delivered(false);
             networkPausedRef.current = true;
             setNetworkPaused(true);
             if (!unknownAction.current)
@@ -367,6 +405,7 @@ export default function App() {
         } finally {
           if (lane.isCurrent(token)) {
             inflight.current = false;
+            poller.current?.changed();
             setPending(null);
           }
         }
@@ -376,6 +415,7 @@ export default function App() {
   const connect = async (chain: "near" | "ethereum" | "switch") => {
     if (!config || inflight.current) return;
     inflight.current = true;
+    poller.current?.changed();
     setPending("wallet");
     setError("");
     try {
@@ -386,6 +426,7 @@ export default function App() {
       setError(e instanceof Error ? e.message : "Wallet connection failed.");
     } finally {
       inflight.current = false;
+      poller.current?.changed();
       setPending(null);
     }
   };

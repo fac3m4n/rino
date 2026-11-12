@@ -10,6 +10,7 @@ export const GET_TIMEOUT_MS = 15000;
 export const ACTION_TIMEOUT_MS = 180000;
 export interface RequestOptions {
   timeoutMs?: number;
+  fresh?: boolean;
   signal?: AbortSignal;
 }
 import { ActionFailure } from "./outcomes";
@@ -84,7 +85,9 @@ export function readApi<T>(
   options: RequestOptions = {},
 ): Promise<T> {
   return requestJson<T>(
-    path,
+    options.fresh && ["config", "state"].includes(path)
+      ? `${path}?fresh=1`
+      : path,
     { headers: { Accept: "application/json" }, cache: "no-store" },
     options,
   );

@@ -5,10 +5,10 @@ import { configFixture, stateFixture } from "../../apps/web/tests/fixtures";
 test("@public-preparation funded public liquidity exposes only the missing demonstration fee endowment", async ({
   page,
 }) => {
-  await page.route("**/api/config", (r) =>
+  await page.route("**/api/config*", (r) =>
     r.fulfill({ json: { ...configFixture, mode: "public" } }),
   );
-  await page.route("**/api/state", (r) =>
+  await page.route("**/api/state*", (r) =>
     r.fulfill({
       json: {
         ...stateFixture,

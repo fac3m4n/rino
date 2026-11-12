@@ -12,7 +12,7 @@ it("public mode returns precise readiness without fixture state or keys and reje
       })
     ).json();
     expect(config.mode).toBe("public");
-    expect(config.near.rpcUrl).toBe("https://test.rpc.fastnear.com");
+    expect(config.near.rpcUrl).toBe("https://near-testnet.drpc.org");
     expect(config.ready).toBe(false);
     expect(config.readinessErrors.length).toBeGreaterThan(0);
     expect(JSON.stringify(config)).not.toMatch(

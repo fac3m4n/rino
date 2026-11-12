@@ -84,3 +84,21 @@ describe("bounded browser transport", () => {
     expect(failure).toBeInstanceOf(RequestFailure);
   });
 });
+it("requests fresh config/state only for explicit reconciliation or action boundaries", async () => {
+  const paths: string[] = [];
+  vi.stubGlobal("fetch", async (url: unknown) => {
+    paths.push(String(url));
+    return new Response("{}");
+  });
+  const { snapshot } = await import("../src/client");
+  await snapshot();
+  await snapshot({ fresh: true });
+  expect(paths).toEqual([
+    "/api/config",
+    "/api/state",
+    "/api/receipts",
+    "/api/config?fresh=1",
+    "/api/state?fresh=1",
+    "/api/receipts",
+  ]);
+});

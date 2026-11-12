@@ -98,18 +98,22 @@ export async function createApp(options: {
       return;
     }
   });
-  app.get("/api/config", async () => {
+  app.get("/api/config", async (req) => {
     if (publicEngine) {
-      const errors = await publicEngine.readiness();
+      const errors = await publicEngine.readiness({
+        fresh: (req.query as { fresh?: string }).fresh === "1",
+      });
       return { ...config, ready: errors.length === 0, readinessErrors: errors };
     }
     return config;
   });
-  app.get("/api/state", async () => {
+  app.get("/api/state", async (req) => {
     if (engine) return engine.state();
     if (publicEngine) {
       try {
-        return await publicEngine.state();
+        return await publicEngine.state({
+          fresh: (req.query as { fresh?: string }).fresh === "1",
+        });
       } catch (e) {
         return {
           ...EMPTY,

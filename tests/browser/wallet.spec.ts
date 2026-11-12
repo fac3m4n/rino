@@ -6,7 +6,7 @@ for (const mode of ["timeout", "reject", "cancel", "speedup"])
   test(`@wallet actual viem ${mode} funding outcome`, async ({ page }) => {
     await page.clock.install();
     await page.addInitScript(installFundingProvider, mode);
-    await page.route("**/api/config", (r) =>
+    await page.route("**/api/config*", (r) =>
       r.fulfill({
         json: {
           ...configFixture,
@@ -17,7 +17,7 @@ for (const mode of ["timeout", "reject", "cancel", "speedup"])
       }),
     );
     let observedBalance = "50000000000000000";
-    await page.route("**/api/state", (r) =>
+    await page.route("**/api/state*", (r) =>
       r.fulfill({
         json: {
           ...stateFixture,

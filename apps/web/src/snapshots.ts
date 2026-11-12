@@ -2,17 +2,27 @@
 export class SnapshotLane<T> {
   private generation = 0;
   private disposed = false;
-  private active?: { controller: AbortController; promise: Promise<boolean> };
+  private active?: {
+    controller: AbortController;
+    promise: Promise<boolean>;
+    fresh: boolean;
+  };
   constructor(
-    private loader: (signal: AbortSignal) => Promise<T>,
+    private loader: (
+      signal: AbortSignal,
+      options?: { fresh?: boolean },
+    ) => Promise<T>,
     private apply: (value: T) => void,
   ) {}
-  refresh(): Promise<boolean> {
+  refresh(options: { fresh?: boolean } = {}): Promise<boolean> {
     if (this.disposed) return Promise.resolve(false);
-    if (this.active) return this.active.promise;
+    if (this.active) {
+      if (!options.fresh || this.active.fresh) return this.active.promise;
+      this.invalidate();
+    }
     const token = this.generation,
       controller = new AbortController();
-    const promise = this.loader(controller.signal)
+    const promise = this.loader(controller.signal, options)
       .then((value) => {
         if (!this.isCurrent(token)) return false;
         this.apply(value);
@@ -25,7 +35,7 @@ export class SnapshotLane<T> {
       .finally(() => {
         if (this.active?.controller === controller) this.active = undefined;
       });
-    this.active = { controller, promise };
+    this.active = { controller, promise, fresh: options.fresh === true };
     return promise;
   }
   invalidate(): number {

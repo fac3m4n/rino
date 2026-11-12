@@ -1,5 +1,6 @@
 /** Public testnet adapter. This module never constructs a signer; RPC credentials load only in public construction. */
 import { JsonRpcProvider } from "near-api-js";
+import { ReadCache } from "./read-cache.ts";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
@@ -19,7 +20,46 @@ import type {
   Terms,
   WalletAction,
 } from "./api.ts";
-export const TESTNET_RPC_URL = "https://test.rpc.fastnear.com";
+// Only this public, credential-free fallback may be supplied to browser connectors.
+export const TESTNET_RPC_URL = "https://near-testnet.drpc.org";
+function nearEndpoint(): string {
+  const configured = process.env.NEAR_TESTNET_RPC_URL;
+  if (configured === undefined) return TESTNET_RPC_URL;
+  try {
+    const url = new URL(configured);
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.hash ||
+      url.port ||
+      configured.trim() !== configured
+    )
+      throw Error();
+    return url.href;
+  } catch {
+    throw Error("Invalid NEAR testnet RPC endpoint");
+  }
+}
+function nearProvider(url: string): JsonRpcProvider {
+  const provider = new JsonRpcProvider(
+    { url },
+    { retries: 1, wait: 0, backoff: 1 },
+  );
+  // SDK transport errors and connection serialization can otherwise include credential-bearing URLs.
+  Object.defineProperty(provider, "toJSON", {
+    value: () => ({ network: "testnet" }),
+  });
+  const send = provider.sendJsonRpc.bind(provider);
+  provider.sendJsonRpc = async (method, params) => {
+    try {
+      return await send(method, params);
+    } catch {
+      throw Error("NEAR provider unavailable or response rejected");
+    }
+  };
+  return provider;
+}
 interface Deployment {
   version: 2;
   controllerId: string;
@@ -82,9 +122,22 @@ async function ethereum(
 }
 export class PublicCoordinator {
   readonly queue = new SerialQueue(4);
-  readonly provider = new JsonRpcProvider({
-    url: TESTNET_RPC_URL,
-  });
+  readonly #provider: JsonRpcProvider;
+  get provider(): JsonRpcProvider {
+    return this.#provider;
+  }
+  private readonly readinessCache = new ReadCache(
+    15000,
+    () => this.readReadiness(),
+    { failed: (value) => value.length > 0 },
+  );
+  private readonly stateCache = new ReadCache(5000, (options) =>
+    this.readState(options.fresh !== false),
+  );
+  private invalidateReads(): void {
+    this.readinessCache.invalidate();
+    this.stateCache.invalidate();
+  }
   private waiting: string = "";
   readonly #urls: readonly [string, string];
   private constructor(
@@ -92,7 +145,9 @@ export class PublicCoordinator {
     readonly journal: Journal,
     readonly directory: string,
     alchemyUrl: string,
+    nearUrl: string,
   ) {
+    this.#provider = nearProvider(nearUrl);
     this.#urls = ["https://ethereum-sepolia-rpc.publicnode.com/", alchemyUrl];
   }
   static async fromFile(
@@ -148,6 +203,7 @@ export class PublicCoordinator {
     const { url: alchemyUrl } = parseAlchemyEndpoint(
       process.env.ALCHEMY_SEPOLIA_RPC_URL,
     );
+    const nearUrl = nearEndpoint();
     const directory = resolve(
       ROOT,
       ".cache/public-coordinator",
@@ -159,17 +215,25 @@ export class PublicCoordinator {
       await Journal.open(resolve(directory, "journal.json")),
       directory,
       alchemyUrl,
+      nearUrl,
     );
   }
   async view<T = any>(method: string): Promise<T> {
-    return (await this.provider.callFunction({
-      contractId: this.deployment.controllerId,
-      method,
-      args: {},
-      blockQuery: { finality: "final" },
-    })) as T;
+    try {
+      return (await this.provider.callFunction({
+        contractId: this.deployment.controllerId,
+        method,
+        args: {},
+        blockQuery: { finality: "final" },
+      })) as T;
+    } catch {
+      throw Error("NEAR provider unavailable or response rejected");
+    }
   }
-  async readiness(): Promise<string[]> {
+  readiness(options: { fresh?: boolean } = {}): Promise<string[]> {
+    return this.readinessCache.read(options);
+  }
+  private async readReadiness(): Promise<string[]> {
     try {
       const [status, account, config, market, chains] = await Promise.all([
         this.provider.viewNodeStatus(),
@@ -210,8 +274,20 @@ export class PublicCoordinator {
       ];
     }
   }
-  async state(): Promise<State> {
-    const errors = await this.readiness();
+  state(options: { fresh?: boolean } = {}): Promise<State> {
+    return this.stateCache.read(options);
+  }
+  private async readState(fresh: boolean): Promise<State> {
+    try {
+      return await this.readStateChecked(fresh);
+    } catch {
+      throw Error(
+        "Public deployment or fixed RPC providers unavailable; no local fixture fallback",
+      );
+    }
+  }
+  private async readStateChecked(fresh: boolean): Promise<State> {
+    const errors = await this.readiness({ fresh });
     if (errors.length) throw Error(errors.join("; "));
     const [market, settlement, proofStatus, evidence, total, block] =
       await Promise.all([
@@ -386,166 +462,174 @@ export class PublicCoordinator {
   }
   async action(request: ActionRequest): Promise<ActionResult> {
     return this.queue.run(async () => {
-      const state = await this.state(),
-        m = state.market!,
-        s = state.settlement!,
-        { action, role } = request;
-      const borrower = ["initialize", "prove", "borrow", "repay", "cancel"];
-      if (borrower.includes(action) && role !== "borrower")
-        throw Error("borrower wallet required");
-      if (["fund", "default", "claim"].includes(action) && role !== "lender")
-        throw Error("lender wallet required");
-      let walletActions: WalletAction[] = [];
-      switch (action) {
-        case "initialize":
-          walletActions = [this.wallet("initialize_vault")];
-          break;
-        case "fund":
-          if (BigInt(m.borrower_balance_units) < 1000000n)
-            walletActions.push(
-              this.wallet(
-                "ft_transfer",
-                {
-                  receiver_id: m.borrower,
-                  amount: (
-                    1000000n - BigInt(m.borrower_balance_units)
+      this.invalidateReads();
+      try {
+        const state = await this.state(),
+          m = state.market!,
+          s = state.settlement!,
+          { action, role } = request;
+        const borrower = ["initialize", "prove", "borrow", "repay", "cancel"];
+        if (borrower.includes(action) && role !== "borrower")
+          throw Error("borrower wallet required");
+        if (["fund", "default", "claim"].includes(action) && role !== "lender")
+          throw Error("lender wallet required");
+        let walletActions: WalletAction[] = [];
+        switch (action) {
+          case "initialize":
+            walletActions = [this.wallet("initialize_vault")];
+            break;
+          case "fund":
+            if (BigInt(m.borrower_balance_units) < 1000000n)
+              walletActions.push(
+                this.wallet(
+                  "ft_transfer",
+                  {
+                    receiver_id: m.borrower,
+                    amount: (
+                      1000000n - BigInt(m.borrower_balance_units)
+                    ).toString(),
+                  },
+                  "1",
+                ),
+              );
+            if (m.available_liquidity_units === "0")
+              walletActions.push(this.wallet("fund_liquidity", {}, "1"));
+            break;
+          case "prove":
+            if (!m.vault) throw Error("derive vault first");
+            walletActions = [
+              this.wallet("request_proof", {
+                bundle: await this.bundle(m.vault, undefined, "0", 0n, {
+                  terms: m.terms,
+                  liveBalance: state.ethereum?.vaultBalanceWei,
+                }),
+              }),
+            ];
+            break;
+          case "borrow":
+          case "repay":
+            walletActions = [this.wallet(action, {}, "1")];
+            break;
+          case "default":
+            walletActions = [this.wallet("declare_default")];
+            break;
+          case "claim":
+            walletActions = [this.wallet("claim_credit", {}, "1")];
+            break;
+          case "cancel":
+            walletActions = [this.wallet("cancel")];
+            break;
+          case "recover":
+          case "settle": {
+            if (s.retired) break;
+            if (s.pending) {
+              if (BigInt(state.nearTimeSeconds!) > BigInt(s.pending.expires_at))
+                walletActions = [this.wallet("expire_pending")];
+              else throw Error(s.pending_reason);
+              break;
+            }
+            if (!s.current_intent) {
+              if (!m.vault) throw Error("vault required");
+              const to =
+                s.branch === "default" &&
+                BigInt(s.remaining_lender_cap_wei) > 0n
+                  ? m.lender_recipient
+                  : m.borrower_recipient;
+              const latest = await Promise.all(
+                this.#urls.map((u) =>
+                  ethereum(u, "eth_getBlockByNumber", ["latest", false]),
+                ),
+              );
+              const fee = latest
+                .map((b) => BigInt(b.baseFeePerGas) * 2n)
+                .reduce((a, b) => (a > b ? a : b));
+              if (fee <= 0n || fee > BigInt(m.terms.fee_cap_wei_per_gas))
+                throw Error("current fee exceeds immutable cap");
+              walletActions = [
+                this.wallet("prepare_settlement", {
+                  bundle: await this.bundle(m.vault, to, s.expected_nonce),
+                  gas_price: fee.toString(),
+                }),
+              ];
+              break;
+            }
+            const candidates = await this.view<SignedTransaction[]>(
+              "get_signed_transactions",
+            );
+            if (!candidates.length) {
+              walletActions = [this.wallet("request_signature")];
+              break;
+            }
+            const candidate = candidates[0];
+            await verifyRelay(
+              candidate.raw,
+              candidate.hash,
+              m.vault!,
+              s.current_intent.transfer,
+            );
+            let receipt: any = null;
+            for (const candidate of candidates) {
+              const observed = await Promise.all(
+                this.#urls.map((u) =>
+                  ethereum(u, "eth_getTransactionReceipt", [candidate.hash]),
+                ),
+              );
+              if (
+                observed[0] &&
+                observed[1] &&
+                observed[0].blockHash === observed[1].blockHash
+              ) {
+                receipt = observed[0];
+                break;
+              }
+            }
+            if (!receipt) {
+              await this.journal.relay(
+                candidate.hash,
+                candidate.raw,
+                async (raw) =>
+                  ethereum(this.#urls[0], "eth_sendRawTransaction", [raw]),
+              );
+              throw Error(
+                "Authorized raw transaction relayed; await receipt and repeat settlement; no new nonce authorized",
+              );
+            }
+            walletActions = [
+              this.wallet("confirm_settlement", {
+                candidate_hash: receipt.transactionHash,
+                bundle: {
+                  checkpoint: await this.bundle(
+                    m.vault!,
+                    s.current_intent.transfer.to,
+                    s.current_intent.transfer.nonce,
+                    BigInt(receipt.blockNumber),
+                  ),
+                  transaction_index: BigInt(
+                    receipt.transactionIndex,
                   ).toString(),
                 },
-                "1",
-              ),
-            );
-          if (m.available_liquidity_units === "0")
-            walletActions.push(this.wallet("fund_liquidity", {}, "1"));
-          break;
-        case "prove":
-          if (!m.vault) throw Error("derive vault first");
-          walletActions = [
-            this.wallet("request_proof", {
-              bundle: await this.bundle(m.vault, undefined, "0", 0n, {
-                terms: m.terms,
-                liveBalance: state.ethereum?.vaultBalanceWei,
-              }),
-            }),
-          ];
-          break;
-        case "borrow":
-        case "repay":
-          walletActions = [this.wallet(action, {}, "1")];
-          break;
-        case "default":
-          walletActions = [this.wallet("declare_default")];
-          break;
-        case "claim":
-          walletActions = [this.wallet("claim_credit", {}, "1")];
-          break;
-        case "cancel":
-          walletActions = [this.wallet("cancel")];
-          break;
-        case "recover":
-        case "settle": {
-          if (s.retired) break;
-          if (s.pending) {
-            if (BigInt(state.nearTimeSeconds!) > BigInt(s.pending.expires_at))
-              walletActions = [this.wallet("expire_pending")];
-            else throw Error(s.pending_reason);
-            break;
-          }
-          if (!s.current_intent) {
-            if (!m.vault) throw Error("vault required");
-            const to =
-              s.branch === "default" && BigInt(s.remaining_lender_cap_wei) > 0n
-                ? m.lender_recipient
-                : m.borrower_recipient;
-            const latest = await Promise.all(
-              this.#urls.map((u) =>
-                ethereum(u, "eth_getBlockByNumber", ["latest", false]),
-              ),
-            );
-            const fee = latest
-              .map((b) => BigInt(b.baseFeePerGas) * 2n)
-              .reduce((a, b) => (a > b ? a : b));
-            if (fee <= 0n || fee > BigInt(m.terms.fee_cap_wei_per_gas))
-              throw Error("current fee exceeds immutable cap");
-            walletActions = [
-              this.wallet("prepare_settlement", {
-                bundle: await this.bundle(m.vault, to, s.expected_nonce),
-                gas_price: fee.toString(),
+                signature_json: null,
               }),
             ];
             break;
           }
-          const candidates = await this.view<SignedTransaction[]>(
-            "get_signed_transactions",
-          );
-          if (!candidates.length) {
-            walletActions = [this.wallet("request_signature")];
-            break;
-          }
-          const candidate = candidates[0];
-          await verifyRelay(
-            candidate.raw,
-            candidate.hash,
-            m.vault!,
-            s.current_intent.transfer,
-          );
-          let receipt: any = null;
-          for (const candidate of candidates) {
-            const observed = await Promise.all(
-              this.#urls.map((u) =>
-                ethereum(u, "eth_getTransactionReceipt", [candidate.hash]),
-              ),
-            );
-            if (
-              observed[0] &&
-              observed[1] &&
-              observed[0].blockHash === observed[1].blockHash
-            ) {
-              receipt = observed[0];
-              break;
-            }
-          }
-          if (!receipt) {
-            await this.journal.relay(
-              candidate.hash,
-              candidate.raw,
-              async (raw) =>
-                ethereum(this.#urls[0], "eth_sendRawTransaction", [raw]),
-            );
+          default:
             throw Error(
-              "Authorized raw transaction relayed; await receipt and repeat settlement; no new nonce authorized",
+              "local-only fault/challenge control unavailable in public mode",
             );
-          }
-          walletActions = [
-            this.wallet("confirm_settlement", {
-              candidate_hash: receipt.transactionHash,
-              bundle: {
-                checkpoint: await this.bundle(
-                  m.vault!,
-                  s.current_intent.transfer.to,
-                  s.current_intent.transfer.nonce,
-                  BigInt(receipt.blockNumber),
-                ),
-                transaction_index: BigInt(receipt.transactionIndex).toString(),
-              },
-              signature_json: null,
-            }),
-          ];
-          break;
         }
-        default:
-          throw Error(
-            "local-only fault/challenge control unavailable in public mode",
-          );
+        return {
+          ok: true,
+          message: walletActions.length
+            ? "Review and sign the fixed controller action with the selected participant wallet"
+            : "No wallet action required",
+          state,
+          receiptIds: [],
+          walletActions,
+        };
+      } finally {
+        this.invalidateReads();
       }
-      return {
-        ok: true,
-        message: walletActions.length
-          ? "Review and sign the fixed controller action with the selected participant wallet"
-          : "No wallet action required",
-        state,
-        receiptIds: [],
-        walletActions,
-      };
     });
   }
 }

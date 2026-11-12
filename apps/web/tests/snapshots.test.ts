@@ -179,3 +179,22 @@ describe("deliberate continuation after checked unchanged state", () => {
     ).toBe(false);
   });
 });
+it("fresh refresh supersedes an in-flight display read and forwards fresh authority", async () => {
+  const old = deferred<string>();
+  let calls = 0;
+  const modes: (boolean | undefined)[] = [];
+  const applied: string[] = [];
+  const lane = new SnapshotLane(
+    (_signal, options) => {
+      modes.push(options?.fresh);
+      return ++calls === 1 ? old.promise : Promise.resolve("fresh");
+    },
+    (v) => applied.push(v),
+  );
+  const display = lane.refresh();
+  await lane.refresh({ fresh: true });
+  old.resolve("old");
+  await display;
+  expect(modes).toEqual([undefined, true]);
+  expect(applied).toEqual(["fresh"]);
+});

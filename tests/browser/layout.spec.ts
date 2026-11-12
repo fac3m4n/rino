@@ -6,10 +6,10 @@ import {
 } from "../../apps/web/tests/fixtures";
 
 test.beforeEach(async ({ page }) => {
-  await page.route("**/api/config", (route) =>
+  await page.route("**/api/config*", (route) =>
     route.fulfill({ json: configFixture }),
   );
-  await page.route("**/api/state", (route) =>
+  await page.route("**/api/state*", (route) =>
     route.fulfill({ json: stateFixture }),
   );
   await page.route("**/api/receipts", (route) => route.fulfill({ json: [] }));
@@ -61,7 +61,7 @@ test("@layout fixture-only responsive dashboard and keyboard evidence drawer", a
 test("@layout unready public environment and pending receipts block financial actions", async ({
   page,
 }) => {
-  await page.route("**/api/config", (route) =>
+  await page.route("**/api/config*", (route) =>
     route.fulfill({
       json: {
         ...configFixture,
@@ -71,7 +71,7 @@ test("@layout unready public environment and pending receipts block financial ac
       },
     }),
   );
-  await page.route("**/api/state", (route) =>
+  await page.route("**/api/state*", (route) =>
     route.fulfill({
       json: {
         ...stateFixture,
@@ -95,7 +95,7 @@ test("@layout unready public environment and pending receipts block financial ac
 test("@layout authenticated terminal closure does not show a pending warning", async ({
   page,
 }) => {
-  await page.route("**/api/state", (route) =>
+  await page.route("**/api/state*", (route) =>
     route.fulfill({
       json: {
         ...stateFixture,
@@ -124,7 +124,7 @@ test("@layout authenticated terminal closure does not show a pending warning", a
 test("@layout cancellation preserves skipped proof and borrowing history", async ({
   page,
 }) => {
-  await page.route("**/api/state", (route) =>
+  await page.route("**/api/state*", (route) =>
     route.fulfill({
       json: {
         ...stateFixture,
@@ -158,7 +158,7 @@ test("@layout cancellation preserves skipped proof and borrowing history", async
 test("@layout retired default disables empty claims and obsolete recovery controls", async ({
   page,
 }) => {
-  await page.route("**/api/state", (route) =>
+  await page.route("**/api/state*", (route) =>
     route.fulfill({
       json: {
         ...stateFixture,
@@ -198,7 +198,7 @@ test("@layout retired default disables empty claims and obsolete recovery contro
 test("@history default retains immutable debt at the historical boundary", async ({
   page,
 }) => {
-  await page.route("**/api/state", (r) =>
+  await page.route("**/api/state*", (r) =>
     r.fulfill({
       json: {
         ...stateFixture,
@@ -223,7 +223,7 @@ for (const funded of [false, true])
   test(`@history ${funded ? "funded" : "empty"} cancellation has truthful funding history`, async ({
     page,
   }) => {
-    await page.route("**/api/state", (r) =>
+    await page.route("**/api/state*", (r) =>
       r.fulfill({
         json: {
           ...stateFixture,
