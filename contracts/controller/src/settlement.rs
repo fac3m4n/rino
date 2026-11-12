@@ -82,7 +82,10 @@ use proofcredit_settlement_protocol::{
 };
 // Initial conservative allocation. Actual Sandbox receipt cost must be measured before public use.
 pub(crate) const SETTLEMENT_EXECUTOR_GAS: Gas = Gas::from_tgas(140);
-pub(crate) const SETTLEMENT_CALLBACK_GAS: Gas = Gas::from_tgas(130);
+pub(crate) const SETTLEMENT_CALLBACK_GAS: Gas = Gas::from_tgas(90);
+// Max-wire direct confirmation burned 52.0685 Tgas while reserving promises in
+// real Sandbox. Reserve 70 Tgas for settlement entry; other routes keep 30 Tgas.
+pub(crate) const SETTLEMENT_ENTRY_RESERVE: Gas = Gas::from_tgas(70);
 #[near]
 impl Controller {
     pub fn prepare_settlement(&mut self, bundle: SettlementBundle, gas_price: U128) -> Promise {
@@ -228,7 +231,13 @@ impl Controller {
         action: SettlementAction,
         kind: OperationKind,
     ) -> Promise {
-        Self::assert_gas(SETTLEMENT_EXECUTOR_GAS, SETTLEMENT_CALLBACK_GAS);
+        assert!(
+            env::prepaid_gas().as_gas()
+                >= SETTLEMENT_EXECUTOR_GAS.as_gas()
+                    + SETTLEMENT_CALLBACK_GAS.as_gas()
+                    + SETTLEMENT_ENTRY_RESERVE.as_gas(),
+            "insufficient prepaid settlement gas"
+        );
         let (generation, expires_at) = self.next_operation();
         let beneficiary = match &purpose {
             SettlementPurpose::Confirm { intent, .. } => intent.to.clone(),

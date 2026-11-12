@@ -1097,3 +1097,104 @@ fn historical_confirmation_records_inclusion_block_and_keeps_fresh_incoming_stat
         ("1", "7900000", "100")
     );
 }
+#[test]
+fn settlement_gas_schedule_reserves_entry_headroom_and_requires_full_300_tgas() {
+    use near_sdk::{Gas, NearToken, test_utils::VMContextBuilder, testing_env};
+    let set_gas = |gas: u64| {
+        testing_env!(
+            VMContextBuilder::new()
+                .current_account_id(id("controller.testnet"))
+                .predecessor_account_id(id("borrower.testnet"))
+                .signer_account_id(id("borrower.testnet"))
+                .block_timestamp(1_000_000_000_000)
+                .prepaid_gas(Gas::from_gas(gas))
+                .account_balance(NearToken::from_near(100))
+                .build()
+        );
+    };
+    // Both an ordinary underfunded call and the exact one-gas boundary reject
+    // before a pending request or external promise can be created.
+    for gas in [299_000_000_000_000, 299_999_999_999_999] {
+        let mut c = cancelled();
+        set_gas(gas);
+        let generation = c.generation;
+        panic(|| {
+            drop(c.prepare_settlement(bundle(0, 1_000_000), U128(1)));
+        });
+        assert!(c.pending.is_none());
+        assert_eq!(c.generation, generation);
+        assert!(get_created_receipts().is_empty());
+    }
+    let assert_schedule = || {
+        let calls: Vec<_> = get_created_receipts()
+            .into_iter()
+            .flat_map(|r| r.actions)
+            .filter_map(|action| {
+                if let MockAction::FunctionCallWeight {
+                    method_name,
+                    prepaid_gas,
+                    ..
+                } = action
+                {
+                    Some((
+                        String::from_utf8(method_name).unwrap(),
+                        prepaid_gas.as_gas(),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(
+            calls,
+            vec![
+                ("request_execution".into(), 140_000_000_000_000),
+                ("on_settlement_result".into(), 90_000_000_000_000)
+            ]
+        );
+        assert_eq!(
+            300_000_000_000_000 - calls.iter().map(|c| c.1).sum::<u64>(),
+            70_000_000_000_000
+        );
+    };
+    let mut c = cancelled();
+    set_gas(300_000_000_000_000);
+    drop(c.prepare_settlement(bundle(0, 1_000_000), U128(1)));
+    assert!(c.pending.is_some());
+    assert_schedule();
+    // The actual direct-packet confirmation route uses the same schedule;
+    // this native assertion provisions gas, not a substitute for receipt measurement.
+    let mut c = cancelled();
+    prepare(&mut c, 1_000_000, 1);
+    let packet = signature(&c);
+    let transfer = c
+        .loan
+        .as_ref()
+        .unwrap()
+        .settlement
+        .intent
+        .as_ref()
+        .unwrap()
+        .transfer;
+    let candidate = proofcredit_loan_core::verify_mpc_signature(
+        &transfer,
+        proofcredit_settlement_protocol::fixed_hex::<20>(VAULT).unwrap(),
+        packet.as_bytes(),
+    )
+    .unwrap();
+    set_gas(300_000_000_000_000);
+    drop(c.confirm_settlement(
+        hx(&candidate.hash),
+        ConfirmationBundle {
+            checkpoint: bundle(1, 0),
+            transaction_index: "0".into(),
+        },
+        Some(packet),
+    ));
+    assert_schedule();
+    let mut c = cancelled();
+    prepare(&mut c, 20_000, 1);
+    set_gas(300_000_000_000_000);
+    drop(c.add_fee_budget(bundle(0, 22_000), U128(2_000)));
+    assert_schedule();
+}
