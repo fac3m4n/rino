@@ -1214,7 +1214,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6e3919bbaa2945715f0bb6d3934a173d1e9a59ac23767fbaaef277265a7411b"
 dependencies = [
  "cfg-if 1.0.5",
+ "ecdsa",
  "elliptic-curve",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -1319,6 +1321,15 @@ dependencies = [
  "json_comments",
  "thiserror",
  "tracing",
+]
+
+[[package]]
+name = "near-contract-standards"
+version = "5.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5172408539a27bda9a5bb611e1dcdb0825ee26296bf37ccec9299c7f90357834"
+dependencies = [
+ "near-sdk",
 ]
 
 [[package]]
@@ -1723,6 +1734,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "omni-transaction"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c29e3e53ff14dff841ad4bd83616ebb328009333fc90a6b8cb71450b351c665"
+dependencies = [
+ "hex",
+ "rlp 0.6.1",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1904,7 +1925,7 @@ dependencies = [
 name = "proofcredit-collateral-proof"
 version = "0.1.0"
 dependencies = [
- "rlp",
+ "rlp 0.5.2",
  "tiny-keccak",
 ]
 
@@ -1913,11 +1934,28 @@ name = "proofcredit-controller"
 version = "0.1.0"
 dependencies = [
  "k256",
+ "near-contract-standards",
  "near-sdk",
+ "proofcredit-loan-core",
  "proofcredit-proof-protocol",
+ "proofcredit-settlement-protocol",
+ "rlp 0.5.2",
  "serde",
  "serde_json",
  "url",
+]
+
+[[package]]
+name = "proofcredit-loan-core"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "hex",
+ "k256",
+ "omni-transaction",
+ "serde",
+ "serde_json",
+ "tiny-keccak",
 ]
 
 [[package]]
@@ -1925,6 +1963,19 @@ name = "proofcredit-proof-protocol"
 version = "0.1.0"
 dependencies = [
  "proofcredit-collateral-proof",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "proofcredit-settlement-protocol"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "proofcredit-collateral-proof",
+ "proofcredit-loan-core",
+ "proofcredit-proof-protocol",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2036,6 +2087,16 @@ name = "rlp"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb919243f34364b6bd2fc10ef797edbfa75f33c252e7998527479c6d6b47e1ec"
+dependencies = [
+ "bytes",
+ "rustc-hex",
+]
+
+[[package]]
+name = "rlp"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa24e92bb2a83198bb76d661a71df9f7076b8c420b8696e4d3d97d50d94479e3"
 dependencies = [
  "bytes",
  "rustc-hex",

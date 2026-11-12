@@ -127,6 +127,16 @@ fn receipt(v: &Value) -> Result<ReceiptObservation, WorkerError> {
         contract_address: contract,
     })
 }
+fn inclusion_header(header: &Value) -> Result<InclusionHeader, WorkerError> {
+    Ok(InclusionHeader {
+        block_number: quantity(&header["number"])?,
+        block_hash: data(&header["hash"], 32)?,
+        state_root: data(&header["stateRoot"], 32)?,
+        block_timestamp: quantity(&header["timestamp"])?,
+        base_fee_per_gas: quantity(&header["baseFeePerGas"])?,
+    })
+}
+
 fn observation(
     t: &impl RpcTransport,
     p: Provider,
@@ -151,8 +161,8 @@ fn observation(
         state_root: data(&header["stateRoot"], 32)?,
         block_timestamp: quantity(&header["timestamp"])?,
     };
-    let (transaction, receipt) = match &r.purpose {
-        SettlementPurpose::Prepare => (None, None),
+    let (transaction, receipt, inclusion_header) = match &r.purpose {
+        SettlementPurpose::Prepare => (None, None, None),
         SettlementPurpose::Confirm { candidate, .. } => {
             let tx = rpc(t, p, 4, "eth_getTransactionByHash", json!([candidate.hash]))?;
             let re = rpc(
@@ -162,10 +172,27 @@ fn observation(
                 "eth_getTransactionReceipt",
                 json!([candidate.hash]),
             )?;
-            (Some(transaction(&tx)?), Some(receipt(&re)?))
+            let tx = transaction(&tx)?;
+            let receipt = receipt(&re)?;
+            let inclusion = if receipt.block_number == r.bundle.block_number {
+                inclusion_header(&header)?
+            } else {
+                let inclusion_number =
+                    decimal_u64(&receipt.block_number).map_err(|_| WorkerError::Rpc)?;
+                let historical = rpc(
+                    t,
+                    p,
+                    6,
+                    "eth_getBlockByNumber",
+                    json!([format!("0x{inclusion_number:x}"), false]),
+                )?;
+                inclusion_header(&historical)?
+            };
+            (Some(tx), Some(receipt), Some(inclusion))
         }
     };
     Ok(SettlementObservation {
+        inclusion_header,
         base_fee_per_gas: quantity(&header["baseFeePerGas"])?,
         checkpoint,
         transaction,

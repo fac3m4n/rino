@@ -40,6 +40,7 @@ fn both_receipt_statuses_require_exact_post_nonce_and_allow_incoming_eth() {
         let (r, o) = confirm_fixture(status, 3_000_000_000_000_000);
         let e = confirm(&r, &o).unwrap();
         assert_eq!(e.receipt.as_ref().unwrap().status, status);
+        assert_eq!(e.inclusion_header.as_ref().unwrap().block_number, "123");
         assert_eq!(e.nonce, "112");
         assert_eq!(
             validate_settlement_evidence(&enc(&e), &r, &settlement_request_digest(&enc(&r)), NOW),
@@ -67,6 +68,8 @@ fn both_receipt_statuses_require_exact_post_nonce_and_allow_incoming_eth() {
     .bundle;
     for observation in &mut changed_obs {
         observation.checkpoint.state_root = changed.bundle.state_root.clone();
+        observation.inclusion_header.as_mut().unwrap().state_root =
+            changed.bundle.state_root.clone();
     }
     assert!(confirm(&changed, &changed_obs).is_ok());
     let (mut r, o) = confirm_fixture("1", 3_000_000_000_000_000);
@@ -75,6 +78,7 @@ fn both_receipt_statuses_require_exact_post_nonce_and_allow_incoming_eth() {
     let mut o = o;
     for e in &mut o {
         e.checkpoint.state_root = r.bundle.state_root.clone();
+        e.inclusion_header.as_mut().unwrap().state_root = r.bundle.state_root.clone();
     }
     assert!(confirm(&r, &o).is_err());
 }
@@ -297,6 +301,125 @@ fn confirmation_cannot_claim_inclusion_below_authenticated_base_fee() {
     assert!(confirm(&r, &observations).is_ok());
     for observation in &mut observations {
         observation.base_fee_per_gas = "100000000001".into();
+        observation
+            .inclusion_header
+            .as_mut()
+            .unwrap()
+            .base_fee_per_gas = "100000000001".into();
     }
     assert!(confirm(&r, &observations).is_err());
+}
+
+#[test]
+fn historical_receipt_uses_fresh_poststate_after_long_outage_and_inclusion_fee() {
+    for status in ["0", "1"] {
+        let (r, observations) = historical_confirm_fixture(status, 3_000_000_000_000_000);
+        let evidence = confirm(&r, &observations).unwrap();
+        assert_eq!(evidence.block_number, "124");
+        assert_eq!(evidence.base_fee_per_gas, "200000000000");
+        let inclusion = evidence.inclusion_header.as_ref().unwrap();
+        assert_eq!(inclusion.block_number, "123");
+        assert_eq!(inclusion.block_timestamp, "1000");
+        assert_eq!(inclusion.base_fee_per_gas, "10000000000");
+        assert_eq!(evidence.receipt.as_ref().unwrap().block_number, "123");
+        assert_eq!(
+            validate_settlement_evidence(
+                &enc(&evidence),
+                &r,
+                &settlement_request_digest(&enc(&r)),
+                NOW
+            ),
+            Ok(evidence)
+        );
+    }
+}
+#[test]
+fn inclusion_header_requires_canonical_quorum_linkage_and_prepared_lower_bound() {
+    let (r, observations) = historical_confirm_fixture("1", 3_000_000_000_000_000);
+    assert!(confirm(&r, &observations).is_ok());
+    let original =
+        serde_json::to_value(observations[0].inclusion_header.as_ref().unwrap()).unwrap();
+    for field in original.as_object().unwrap().keys() {
+        let mut wrong = observations.clone();
+        let mut value = original.clone();
+        value[field] = json!("wrong");
+        wrong[1].inclusion_header = Some(serde_json::from_value(value).unwrap());
+        assert!(confirm(&r, &wrong).is_err(), "{field}");
+    }
+    for (field, value) in [
+        ("block_number", "122".to_string()),
+        ("block_hash", hx(&[0x77; 32])),
+        ("state_root", hx(&[0x77; 32])),
+        ("block_timestamp", "1001".into()),
+        ("base_fee_per_gas", "10000000001".into()),
+    ] {
+        let mut wrong = observations.clone();
+        let mut header = original.clone();
+        header[field] = json!(value);
+        wrong[1].inclusion_header = Some(serde_json::from_value(header).unwrap());
+        assert!(
+            confirm(&r, &wrong).is_err(),
+            "canonical provider disagreement {field}"
+        );
+    }
+    for number in ["121", "125", "0123"] {
+        let mut wrong = observations.clone();
+        for observation in &mut wrong {
+            observation.inclusion_header.as_mut().unwrap().block_number = number.into();
+            observation.receipt.as_mut().unwrap().block_number = number.into();
+            observation.transaction.as_mut().unwrap().block_number = number.into();
+        }
+        assert!(confirm(&r, &wrong).is_err(), "{number}");
+    }
+    for timestamp in ["9901", "10001", "01"] {
+        let mut wrong = observations.clone();
+        for observation in &mut wrong {
+            observation
+                .inclusion_header
+                .as_mut()
+                .unwrap()
+                .block_timestamp = timestamp.into();
+        }
+        assert!(confirm(&r, &wrong).is_err());
+    }
+    let mut wrong = observations.clone();
+    wrong[1].inclusion_header = None;
+    assert!(confirm(&r, &wrong).is_err());
+    let mut wrong = observations.clone();
+    for o in &mut wrong {
+        o.inclusion_header.as_mut().unwrap().block_hash = hx(&[0x77; 32]);
+    }
+    assert!(confirm(&r, &wrong).is_err());
+}
+#[test]
+fn historical_confirmation_preserves_nonce_balance_and_evidence_bounds() {
+    let (mut r, mut observations) = historical_confirm_fixture("1", 3_000_000_000_000_000);
+    let evidence = confirm(&r, &observations).unwrap();
+    let mut output = serde_json::to_value(&evidence).unwrap();
+    output["inclusion_header"]["unexpected"] = json!(true);
+    assert!(validate_settlement_evidence(
+        &enc(&output),
+        &r,
+        &settlement_request_digest(&enc(&r)),
+        NOW
+    )
+    .is_err());
+    output = serde_json::to_value(&evidence).unwrap();
+    output["inclusion_header"] = serde_json::Value::Null;
+    assert!(validate_settlement_evidence(
+        &enc(&output),
+        &r,
+        &settlement_request_digest(&enc(&r)),
+        NOW
+    )
+    .is_err());
+    let newer = fixture(113, 3_000_000_000_000_000, EMPTY_CODE_HASH, None);
+    r.bundle.state_root = newer.bundle.state_root;
+    r.bundle.vault_account_proof = newer.bundle.vault_account_proof;
+    for o in &mut observations {
+        o.checkpoint.state_root = r.bundle.state_root.clone();
+    }
+    assert!(confirm(&r, &observations).is_err());
+    let (r, o) = historical_confirm_fixture("1", 776_543_210_987_654);
+    assert!(confirm(&r, &o).is_err());
 }

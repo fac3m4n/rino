@@ -259,7 +259,10 @@ fn account(
         None => (0, "0".into(), EMPTY_CODE_HASH.into()),
     })
 }
-fn expected_transaction(r: &SettlementRequest) -> Result<TransactionObservation, ProtocolError> {
+fn expected_transaction(
+    r: &SettlementRequest,
+    inclusion: &InclusionHeader,
+) -> Result<TransactionObservation, ProtocolError> {
     let SettlementPurpose::Confirm {
         intent,
         candidate,
@@ -285,14 +288,15 @@ fn expected_transaction(r: &SettlementRequest) -> Result<TransactionObservation,
         r: candidate.r.clone(),
         s: candidate.s.clone(),
         y_parity: candidate.y_parity.clone(),
-        block_hash: r.bundle.block_hash.clone(),
-        block_number: r.bundle.block_number.clone(),
+        block_hash: inclusion.block_hash.clone(),
+        block_number: inclusion.block_number.clone(),
         transaction_index: transaction_index.clone(),
     })
 }
 fn validate_receipt(
     r: &SettlementRequest,
     receipt: &ReceiptObservation,
+    inclusion: &InclusionHeader,
 ) -> Result<(), ProtocolError> {
     let SettlementPurpose::Confirm {
         intent,
@@ -305,8 +309,8 @@ fn validate_receipt(
     };
     if receipt.transaction_hash != candidate.hash
         || receipt.transaction_index != *transaction_index
-        || receipt.block_hash != r.bundle.block_hash
-        || receipt.block_number != r.bundle.block_number
+        || receipt.block_hash != inclusion.block_hash
+        || receipt.block_number != inclusion.block_number
         || receipt.from != r.vault
         || receipt.to != r.beneficiary
         || receipt.transaction_type != "2"
@@ -319,20 +323,62 @@ fn validate_receipt(
     }
     Ok(())
 }
+fn validate_inclusion_header(
+    r: &SettlementRequest,
+    header: &InclusionHeader,
+    checkpoint_base_fee: &str,
+) -> Result<(), ProtocolError> {
+    let SettlementPurpose::Confirm {
+        minimum_block_number,
+        ..
+    } = &r.purpose
+    else {
+        return Err(ProtocolError::InvalidRequest);
+    };
+    let inclusion_number = decimal_u64(&header.block_number)?;
+    let state_number = decimal_u64(&r.bundle.block_number)?;
+    let inclusion_timestamp = decimal_u64(&header.block_timestamp)?;
+    let state_timestamp = decimal_u64(&r.bundle.block_timestamp)?;
+    fixed_hex::<32>(&header.block_hash)?;
+    fixed_hex::<32>(&header.state_root)?;
+    decimal_u128(&header.base_fee_per_gas)?;
+    if inclusion_number < decimal_u64(minimum_block_number)?
+        || inclusion_number > state_number
+        || inclusion_timestamp > state_timestamp
+    {
+        return Err(ProtocolError::InvalidCheckpoint);
+    }
+    if inclusion_number == state_number {
+        if header.block_hash != r.bundle.block_hash
+            || header.state_root != r.bundle.state_root
+            || header.block_timestamp != r.bundle.block_timestamp
+            || header.base_fee_per_gas != checkpoint_base_fee
+        {
+            return Err(ProtocolError::InvalidCheckpoint);
+        }
+    } else if inclusion_timestamp >= state_timestamp {
+        return Err(ProtocolError::InvalidCheckpoint);
+    }
+    Ok(())
+}
 fn evidence(
     r: &SettlementRequest,
     hash: &[u8; 32],
     base_fee_per_gas: &str,
+    inclusion_header: Option<InclusionHeader>,
     receipt: Option<ReceiptObservation>,
 ) -> Result<SettlementEvidence, ProtocolError> {
-    let base_fee = decimal_u128(base_fee_per_gas)?;
+    decimal_u128(base_fee_per_gas)?;
     let (nonce, balance, code) = account(r, &r.vault, &r.bundle.vault_account_proof)?;
     if code != EMPTY_CODE_HASH {
         return Err(ProtocolError::AccountPolicy);
     }
     let beneficiary_code_hash = match &r.purpose {
         SettlementPurpose::Prepare => {
-            if nonce != decimal_u64(&r.expected_nonce)? || receipt.is_some() {
+            if nonce != decimal_u64(&r.expected_nonce)?
+                || receipt.is_some()
+                || inclusion_header.is_some()
+            {
                 return Err(ProtocolError::AccountPolicy);
             }
             let (_, _, recipient_code) =
@@ -348,10 +394,14 @@ fn evidence(
             ..
         } => {
             let receipt = receipt.as_ref().ok_or(ProtocolError::EvidenceMismatch)?;
-            if decimal_u128(&intent.gas_price)? < base_fee {
+            let inclusion = inclusion_header
+                .as_ref()
+                .ok_or(ProtocolError::EvidenceMismatch)?;
+            validate_inclusion_header(r, inclusion, base_fee_per_gas)?;
+            if decimal_u128(&intent.gas_price)? < decimal_u128(&inclusion.base_fee_per_gas)? {
                 return Err(ProtocolError::EvidenceMismatch);
             }
-            validate_receipt(r, receipt)?;
+            validate_receipt(r, receipt, inclusion)?;
             if nonce
                 != decimal_u64(&r.expected_nonce)?
                     .checked_add(1)
@@ -398,6 +448,7 @@ fn evidence(
         balance_wei: balance,
         code_hash: code,
         beneficiary_code_hash,
+        inclusion_header,
         base_fee_per_gas: base_fee_per_gas.into(),
         receipt,
         finality_basis: FINALITY_BASIS.into(),
@@ -412,7 +463,7 @@ pub fn verify_prepare(
     if r.purpose != SettlementPurpose::Prepare
         || observations
             .iter()
-            .any(|o| o.transaction.is_some() || o.receipt.is_some())
+            .any(|o| o.transaction.is_some() || o.receipt.is_some() || o.inclusion_header.is_some())
     {
         return Err(ProtocolError::InvalidRequest);
     }
@@ -422,6 +473,7 @@ pub fn verify_prepare(
         &settlement_request_digest(input),
         &observations[0].base_fee_per_gas,
         None,
+        None,
     )
 }
 pub fn verify_confirmation(
@@ -430,11 +482,17 @@ pub fn verify_confirmation(
     now: u64,
 ) -> Result<SettlementEvidence, ProtocolError> {
     let r = parse_settlement_request(input, now)?;
-    let tx = expected_transaction(&r)?;
+    let inclusion = observations[0]
+        .inclusion_header
+        .as_ref()
+        .ok_or(ProtocolError::EvidenceMismatch)?;
+    validate_inclusion_header(&r, inclusion, &observations[0].base_fee_per_gas)?;
+    let tx = expected_transaction(&r, inclusion)?;
     validate_observations(&r, observations)?;
     if observations
         .iter()
         .any(|o| o.transaction.as_ref() != Some(&tx))
+        || observations[0].inclusion_header != observations[1].inclusion_header
         || observations[0].receipt != observations[1].receipt
     {
         return Err(ProtocolError::EvidenceMismatch);
@@ -443,6 +501,7 @@ pub fn verify_confirmation(
         &r,
         &settlement_request_digest(input),
         &observations[0].base_fee_per_gas,
+        observations[0].inclusion_header.clone(),
         observations[0].receipt.clone(),
     )
 }
@@ -464,6 +523,7 @@ pub fn validate_settlement_evidence(
         expected,
         expected_input_hash,
         &actual.base_fee_per_gas,
+        actual.inclusion_header.clone(),
         actual.receipt.clone(),
     )?;
     if actual != wanted {

@@ -35,6 +35,10 @@ pub enum Status {
 pub enum OperationKind {
     Derivation,
     Proof,
+    SettlementPrepare,
+    SettlementConfirm,
+    FeeTopup,
+    Signature,
 }
 #[near(serializers=[borsh])]
 pub struct Pending {

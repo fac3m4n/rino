@@ -99,8 +99,19 @@ pub struct ReceiptObservation {
     pub effective_gas_price: String,
     pub contract_address: Option<String>,
 }
+/// Canonical receipt inclusion header, independently observed when historical.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InclusionHeader {
+    pub block_number: String,
+    pub block_hash: String,
+    pub state_root: String,
+    pub block_timestamp: String,
+    pub base_fee_per_gas: String,
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettlementObservation {
+    pub inclusion_header: Option<InclusionHeader>,
     pub base_fee_per_gas: String,
     pub checkpoint: proofcredit_proof_protocol::CheckpointObservation,
     pub transaction: Option<TransactionObservation>,
@@ -129,6 +140,7 @@ pub struct SettlementEvidence {
     pub balance_wei: String,
     pub code_hash: String,
     pub beneficiary_code_hash: Option<String>,
+    pub inclusion_header: Option<InclusionHeader>,
     pub base_fee_per_gas: String,
     pub receipt: Option<ReceiptObservation>,
     pub finality_basis: String,

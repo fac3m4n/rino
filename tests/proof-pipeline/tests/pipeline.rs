@@ -549,6 +549,7 @@ fn expired_state(now: u64) -> Vec<u8> {
         NetworkMode::Sandbox {
             mpc: "mpc".parse().unwrap(),
         },
+        None,
     );
     drop(c.initialize_vault());
     let xy = unhex(

@@ -101,6 +101,7 @@ pub fn fixture(
 }
 pub fn obs(r: &SettlementRequest) -> [SettlementObservation; 2] {
     PROVIDER_IDS.map(|id| SettlementObservation {
+        inclusion_header: None,
         base_fee_per_gas: "10000000000".into(),
         checkpoint: CheckpointObservation {
             provider_id: id.into(),
@@ -193,6 +194,13 @@ pub fn confirm_fixture(
     };
     let mut o = obs(&r);
     for e in &mut o {
+        e.inclusion_header = Some(InclusionHeader {
+            block_number: r.bundle.block_number.clone(),
+            block_hash: r.bundle.block_hash.clone(),
+            state_root: r.bundle.state_root.clone(),
+            block_timestamp: r.bundle.block_timestamp.clone(),
+            base_fee_per_gas: e.base_fee_per_gas.clone(),
+        });
         e.transaction = Some(tx.clone());
         e.receipt = Some(receipt.clone());
     }
@@ -203,4 +211,24 @@ pub fn confirm(
     o: &[SettlementObservation; 2],
 ) -> Result<SettlementEvidence, ProtocolError> {
     verify_confirmation(&enc(r), o, NOW)
+}
+
+pub fn historical_confirm_fixture(
+    status: &str,
+    balance: u64,
+) -> (SettlementRequest, [SettlementObservation; 2]) {
+    let (mut r, mut observations) = confirm_fixture(status, balance);
+    r.bundle.block_number = "124".into();
+    r.bundle.block_hash = hx(&[0x55; 32]);
+    for observation in &mut observations {
+        let h = observation.inclusion_header.as_mut().unwrap();
+        h.block_timestamp = "1000".into();
+        h.state_root = hx(&[0x66; 32]);
+        observation.checkpoint.block_number = r.bundle.block_number.clone();
+        observation.checkpoint.block_hash = r.bundle.block_hash.clone();
+        observation.checkpoint.finalized_number = r.bundle.block_number.clone();
+        // A later base fee may have risen above the immutable old signed price.
+        observation.base_fee_per_gas = "200000000000".into();
+    }
+    (r, observations)
 }

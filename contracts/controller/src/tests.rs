@@ -8,12 +8,12 @@ use near_sdk::{
 use proofcredit_proof_protocol::{EMPTY_CODE_HASH, ProofRequest, request_digest};
 use serde_json::{Value, json};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-const ADDRESS: &str = "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf";
+pub(super) const ADDRESS: &str = "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf";
 const DEPOSIT: u128 = 50_000_000_000_000_000_000_000;
-fn id(s: &str) -> AccountId {
+pub(super) fn id(s: &str) -> AccountId {
     s.parse().unwrap()
 }
-fn context(who: &str, now: u64, results: Vec<PromiseResult>) {
+pub(super) fn context(who: &str, now: u64, results: Vec<PromiseResult>) {
     let ctx = VMContextBuilder::new()
         .current_account_id(id("controller.testnet"))
         .predecessor_account_id(id(who))
@@ -51,6 +51,8 @@ fn controller(status: Status) -> Controller {
         generation: 0,
         pending: None,
         evidence: None,
+        token: None,
+        loan: None,
     }
 }
 fn bundle() -> ProofBundle {
@@ -171,6 +173,7 @@ fn constructor_pins_testnet_accounts_and_validates_source_and_cap() {
             hash.into(),
             U128(d),
             NetworkMode::NearTestnet,
+            None,
         )
     };
     let c = make(

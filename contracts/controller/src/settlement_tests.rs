@@ -1,0 +1,1099 @@
+use super::*;
+use crate::financial_tests::{ctx, funded, market, panic};
+use crate::tests::{context, id};
+use near_contract_standards::fungible_token::FungibleTokenCore;
+use near_sdk::{PromiseResult, mock::MockAction, test_utils::get_created_receipts};
+use proofcredit_loan_core::{default_cap_wei, signed_transaction_hash, signing_digest};
+use proofcredit_settlement_protocol::{
+    EMPTY_CODE_HASH, InclusionHeader, PROVIDER_IDS, ReceiptObservation, SettlementBundle,
+    SettlementObservation, SettlementPurpose, SettlementRequest, TransactionObservation,
+    verify_confirmation, verify_prepare,
+};
+use rlp::RlpStream;
+const VAULT: &str = "0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a";
+fn hx(bytes: &[u8]) -> String {
+    format!(
+        "0x{}",
+        bytes.iter().map(|v| format!("{v:02x}")).collect::<String>()
+    )
+}
+fn leaf(nonce: u64, balance: u128) -> Vec<u8> {
+    let address = proofcredit_settlement_protocol::fixed_hex::<20>(VAULT).unwrap();
+    let key = signed_transaction_hash(&address);
+    let mut path = vec![0x20];
+    path.extend(key);
+    let mut account = RlpStream::new_list(4);
+    account.append(&nonce);
+    account.append(&balance);
+    account.append(&signed_transaction_hash(&[0x80]).as_slice());
+    account.append(
+        &proofcredit_settlement_protocol::fixed_hex::<32>(EMPTY_CODE_HASH)
+            .unwrap()
+            .as_slice(),
+    );
+    let mut trie = RlpStream::new_list(2);
+    trie.append(&path);
+    trie.append(&account.out().to_vec());
+    trie.out().to_vec()
+}
+fn bundle(nonce: u64, balance: u128) -> SettlementBundle {
+    let l = leaf(nonce, balance);
+    SettlementBundle {
+        block_number: "123".into(),
+        block_hash: hx(&[0x44; 32]),
+        state_root: hx(&signed_transaction_hash(&l)),
+        block_timestamp: "1000".into(),
+        vault_account_proof: vec![hx(&l)],
+        beneficiary_account_proof: vec![hx(&l)],
+    }
+}
+fn cancelled() -> Controller {
+    let mut c = market();
+    c.vault = Some(VAULT.into());
+    ctx("borrower.testnet", 1000);
+    c.cancel();
+    c
+}
+fn observations(r: &SettlementRequest) -> [SettlementObservation; 2] {
+    PROVIDER_IDS.map(|p| SettlementObservation {
+        inclusion_header: None,
+        base_fee_per_gas: "1".into(),
+        checkpoint: proofcredit_proof_protocol::CheckpointObservation {
+            provider_id: p.into(),
+            chain_id: r.chain_id.clone(),
+            finalized_number: r.bundle.block_number.clone(),
+            block_number: r.bundle.block_number.clone(),
+            block_hash: r.bundle.block_hash.clone(),
+            state_root: r.bundle.state_root.clone(),
+            block_timestamp: r.bundle.block_timestamp.clone(),
+        },
+        transaction: None,
+        receipt: None,
+    })
+}
+fn prepare(c: &mut Controller, balance: u128, price: u128) {
+    ctx("borrower.testnet", 1000);
+    drop(c.prepare_settlement(
+        bundle(c.loan.as_ref().unwrap().settlement.nonce, balance),
+        U128(price),
+    ));
+    let p = c.pending.as_ref().unwrap();
+    let id = p.generation;
+    let r: SettlementRequest = serde_json::from_slice(&p.input).unwrap();
+    let e = verify_prepare(&p.input, &observations(&r), 1000).unwrap();
+    context(
+        "controller.testnet",
+        1000,
+        vec![PromiseResult::Successful(serde_json::to_vec(&e).unwrap())],
+    );
+    assert!(c.on_settlement_result(U64(id)));
+}
+fn signature(c: &Controller) -> String {
+    let f = c.loan.as_ref().unwrap().settlement.intent.as_ref().unwrap();
+    let key = k256::ecdsa::SigningKey::from_bytes((&[0x11; 32]).into()).unwrap();
+    let (s, rec) = key
+        .sign_prehash_recoverable(&signing_digest(&f.transfer).unwrap())
+        .unwrap();
+    let bytes = s.to_bytes();
+    let mut r = vec![2 + rec.to_byte()];
+    r.extend_from_slice(&bytes[..32]);
+    serde_json::json!({"scheme":"Secp256k1","big_r":{"affine_point":hx(&r)[2..]},"s":{"scalar":hx(&bytes[32..])[2..]},"recovery_id":rec.to_byte()}).to_string()
+}
+fn confirm(c: &mut Controller, status: &str, post: u128) {
+    confirm_candidate(c, 0, status, post);
+}
+fn confirm_candidate(c: &mut Controller, index: usize, status: &str, post: u128) {
+    let s = &c.loan.as_ref().unwrap().settlement;
+    let n = s.nonce;
+    let hash = hx(&s.candidates[index].hash);
+    ctx("borrower.testnet", 1000);
+    drop(c.confirm_settlement(
+        hash,
+        ConfirmationBundle {
+            checkpoint: bundle(n + 1, post),
+            transaction_index: "0".into(),
+        },
+        None,
+    ));
+    let (id, raw) = confirmation_output(c, status, 1000, None, "1");
+    context(
+        "controller.testnet",
+        1000,
+        vec![PromiseResult::Successful(raw)],
+    );
+    assert!(c.on_settlement_result(U64(id)));
+    assert!(!c.on_settlement_result(U64(id)));
+}
+fn confirmation_output(
+    c: &Controller,
+    status: &str,
+    now: u64,
+    inclusion: Option<InclusionHeader>,
+    state_base_fee: &str,
+) -> (u64, Vec<u8>) {
+    let p = c.pending.as_ref().unwrap();
+    let id = p.generation;
+    let r: SettlementRequest = serde_json::from_slice(&p.input).unwrap();
+    let SettlementPurpose::Confirm {
+        intent, candidate, ..
+    } = &r.purpose
+    else {
+        panic!("wrong purpose")
+    };
+    let inclusion = inclusion.unwrap_or_else(|| InclusionHeader {
+        block_number: r.bundle.block_number.clone(),
+        block_hash: r.bundle.block_hash.clone(),
+        state_root: r.bundle.state_root.clone(),
+        block_timestamp: r.bundle.block_timestamp.clone(),
+        base_fee_per_gas: state_base_fee.into(),
+    });
+    let tx = TransactionObservation {
+        hash: candidate.hash.clone(),
+        chain_id: r.chain_id.clone(),
+        nonce: intent.nonce.clone(),
+        from: r.vault.clone(),
+        to: intent.to.clone(),
+        value: intent.value.clone(),
+        gas: "21000".into(),
+        max_fee_per_gas: intent.gas_price.clone(),
+        max_priority_fee_per_gas: intent.gas_price.clone(),
+        transaction_type: "2".into(),
+        input: "0x".into(),
+        empty_access_list: true,
+        r: candidate.r.clone(),
+        s: candidate.s.clone(),
+        y_parity: candidate.y_parity.clone(),
+        block_hash: inclusion.block_hash.clone(),
+        block_number: inclusion.block_number.clone(),
+        transaction_index: "0".into(),
+    };
+    let receipt = ReceiptObservation {
+        transaction_hash: candidate.hash.clone(),
+        transaction_index: "0".into(),
+        block_hash: inclusion.block_hash.clone(),
+        block_number: inclusion.block_number.clone(),
+        from: r.vault.clone(),
+        to: intent.to.clone(),
+        transaction_type: "2".into(),
+        status: status.into(),
+        gas_used: "21000".into(),
+        effective_gas_price: intent.gas_price.clone(),
+        contract_address: None,
+    };
+    let mut o = observations(&r);
+    for e in &mut o {
+        e.base_fee_per_gas = state_base_fee.into();
+        e.inclusion_header = Some(inclusion.clone());
+        e.transaction = Some(tx.clone());
+        e.receipt = Some(receipt.clone());
+    }
+    let evidence = verify_confirmation(&p.input, &o, now).unwrap();
+    (id, serde_json::to_vec(&evidence).unwrap())
+}
+
+#[test]
+fn cancellation_prepare_pins_economics_before_signing_and_recovers_exact_mpc_signature() {
+    let mut c = cancelled();
+    ctx("borrower.testnet", 1000);
+    panic(|| {
+        drop(c.request_signature());
+    });
+    prepare(&mut c, 1_000_000, 1);
+    let s = &c.loan.as_ref().unwrap().settlement;
+    let f = s.intent.as_ref().unwrap();
+    assert_eq!(
+        (f.transfer.nonce, f.transfer.value, f.transfer.gas_price),
+        (0, 979_000, 1)
+    );
+    assert_eq!(f.transfer.to, [0x11; 20]);
+    assert_eq!(s.stage, settlement::SettlementStage::ReadyToSign);
+    let sig = signature(&c);
+    ctx("borrower.testnet", 1000);
+    drop(c.request_signature());
+    let request = c.pending.as_ref().unwrap().generation;
+    let args = get_created_receipts()
+        .iter()
+        .flat_map(|r| r.actions.iter())
+        .find_map(|a| {
+            if let MockAction::FunctionCallWeight {
+                method_name,
+                args,
+                attached_deposit,
+                ..
+            } = a
+            {
+                if method_name == b"sign" {
+                    assert_eq!(attached_deposit.as_yoctonear(), 1);
+                    Some(serde_json::from_slice::<serde_json::Value>(args).unwrap())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    assert_eq!(args["request"]["path"], "proofcredit:sepolia:v1:0");
+    assert_eq!(
+        args["request"]["payload_v2"]["Ecdsa"],
+        hx(&c
+            .loan
+            .as_ref()
+            .unwrap()
+            .settlement
+            .intent
+            .as_ref()
+            .unwrap()
+            .digest)[2..]
+    );
+    context(
+        "controller.testnet",
+        1000,
+        vec![PromiseResult::Successful(sig.into_bytes())],
+    );
+    assert!(c.on_signature_result(U64(request)));
+    assert_eq!(c.loan.as_ref().unwrap().settlement.candidates.len(), 1);
+    confirm(&mut c, "1", 0);
+    let l = c.loan.as_ref().unwrap();
+    assert_eq!(l.phase, LoanPhase::Closed);
+    assert_eq!(
+        (
+            l.settlement.nonce,
+            l.settlement.borrower_surplus,
+            l.settlement.fees_paid
+        ),
+        (1, 979_000, 21_000)
+    );
+}
+#[test]
+fn signature_uncertainty_expiry_retry_adoption_and_bad_callbacks_never_unlock_intent() {
+    let mut c = cancelled();
+    prepare(&mut c, 1_000_000, 1);
+    let frozen = c
+        .loan
+        .as_ref()
+        .unwrap()
+        .settlement
+        .intent
+        .as_ref()
+        .unwrap()
+        .transfer;
+    for output in [
+        PromiseResult::Failed,
+        PromiseResult::Successful(vec![0; 1025]),
+        PromiseResult::Successful(b"null".to_vec()),
+    ] {
+        ctx("borrower.testnet", 1000);
+        drop(c.retry_signature());
+        let id = c.pending.as_ref().unwrap().generation;
+        context("controller.testnet", 1000, vec![output]);
+        assert!(!c.on_signature_result(U64(id)));
+        assert_eq!(
+            c.loan
+                .as_ref()
+                .unwrap()
+                .settlement
+                .intent
+                .as_ref()
+                .unwrap()
+                .transfer,
+            frozen
+        );
+    }
+    ctx("borrower.testnet", 1000);
+    drop(c.retry_signature());
+    let old = c.pending.as_ref().unwrap().generation;
+    ctx("borrower.testnet", 1601);
+    c.expire_pending();
+    assert!(c.loan.as_ref().unwrap().settlement.intent.is_some());
+    panic(|| {
+        drop(c.prepare_settlement(bundle(0, 2_000_000), U128(2)));
+    });
+    panic(|| c.cancel());
+    let sig = signature(&c);
+    assert!(c.adopt_signature(sig.clone()));
+    assert!(c.adopt_signature(sig));
+    assert_eq!(c.loan.as_ref().unwrap().settlement.candidates.len(), 1);
+    context("controller.testnet", 1601, vec![PromiseResult::Failed]);
+    assert!(!c.on_signature_result(U64(old)));
+    assert_eq!(c.loan.as_ref().unwrap().settlement.candidates.len(), 1);
+}
+#[test]
+fn active_loan_and_wrong_party_cannot_prepare_sign_confirm_or_topup() {
+    let mut c = funded();
+    ctx("borrower.testnet", 1000);
+    c.borrow();
+    panic(|| {
+        drop(c.prepare_settlement(bundle(0, 1_000_000), U128(1)));
+    });
+    panic(|| {
+        drop(c.request_signature());
+    });
+    let mut c = cancelled();
+    prepare(&mut c, 1_000_000, 1);
+    ctx("attacker.testnet", 1000);
+    panic(|| {
+        drop(c.request_signature());
+    });
+    panic(|| {
+        c.adopt_signature(signature(&c));
+    });
+    panic(|| {
+        drop(c.add_fee_budget(bundle(0, 2_000_000), U128(1)));
+    });
+    context("attacker.testnet", 1000, vec![PromiseResult::Failed]);
+    panic(|| {
+        c.on_signature_result(U64(1));
+    });
+    panic(|| {
+        c.on_settlement_result(U64(1));
+    });
+}
+#[test]
+fn status_zero_consumes_only_fee_and_nonce_before_a_new_intent() {
+    let mut c = cancelled();
+    prepare(&mut c, 1_000_000, 1);
+    ctx("borrower.testnet", 1000);
+    assert!(c.adopt_signature(signature(&c)));
+    confirm(&mut c, "0", 979_000);
+    let s = &c.loan.as_ref().unwrap().settlement;
+    assert_eq!((s.nonce, s.borrower_surplus, s.fees_paid), (1, 0, 21_000));
+    assert!(s.intent.is_none());
+    assert!(s.candidates.is_empty());
+    assert_ne!(c.loan.as_ref().unwrap().phase, LoanPhase::Closed);
+    prepare(&mut c, 979_000, 1);
+    assert_eq!(
+        c.loan
+            .as_ref()
+            .unwrap()
+            .settlement
+            .intent
+            .as_ref()
+            .unwrap()
+            .transfer
+            .nonce,
+        1
+    );
+}
+#[test]
+fn default_caps_lender_and_keeps_next_leg_lender_after_incoming_partial_payment() {
+    let mut c = funded();
+    c.vault = Some(VAULT.into());
+    ctx("borrower.testnet", 1000);
+    c.borrow();
+    ctx("lender.testnet", 1120);
+    c.declare_default();
+    prepare(&mut c, 1_000_000, 1);
+    assert_eq!(
+        c.loan
+            .as_ref()
+            .unwrap()
+            .settlement
+            .intent
+            .as_ref()
+            .unwrap()
+            .transfer
+            .to,
+        [0x22; 20]
+    );
+    ctx("borrower.testnet", 1000);
+    assert!(c.adopt_signature(signature(&c)));
+    confirm(&mut c, "1", 1_000_000);
+    prepare(&mut c, 1_000_000, 1);
+    assert_eq!(
+        c.loan
+            .as_ref()
+            .unwrap()
+            .settlement
+            .intent
+            .as_ref()
+            .unwrap()
+            .transfer
+            .to,
+        [0x22; 20]
+    );
+    let s = &c.loan.as_ref().unwrap().settlement;
+    assert!(s.lender_paid < default_cap_wei(&c.loan.as_ref().unwrap().terms).unwrap());
+}
+#[test]
+fn dust_zero_and_fee_floor_do_not_forge_release_or_allow_arbitrary_repricing() {
+    let mut c = cancelled();
+    prepare(&mut c, 21_000, 1);
+    assert_eq!(
+        c.loan.as_ref().unwrap().settlement.stage,
+        settlement::SettlementStage::NeedsTopup
+    );
+    assert!(c.loan.as_ref().unwrap().settlement.intent.is_none());
+    let mut c = cancelled();
+    prepare(&mut c, 0, 1);
+    assert_eq!(c.loan.as_ref().unwrap().phase, LoanPhase::Closed);
+    assert_eq!(c.loan.as_ref().unwrap().settlement.borrower_surplus, 0);
+    let mut c = cancelled();
+    ctx("borrower.testnet", 1000);
+    panic(|| {
+        drop(c.prepare_settlement(bundle(0, 1_000_000), U128(0)));
+    });
+}
+#[test]
+fn canonical_views_expose_exact_string_money_and_only_verified_current_candidates() {
+    let mut c = cancelled();
+    prepare(&mut c, 1_000_000, 1);
+    let market = serde_json::to_value(c.get_market().unwrap()).unwrap();
+    assert_eq!(market["terms"]["principal_units"], "100000000");
+    assert_eq!(
+        market["settlement_wasm_sha256"],
+        "552ddd26f2a0caaaad9c4e06ec08e24b24ab2c54c57d5b5b1991b03277f639a8"
+    );
+    assert_eq!(market["terms"]["term_seconds"], "120");
+    assert_eq!(market["debt_units"], "0");
+    let s = serde_json::to_value(c.get_settlement().unwrap()).unwrap();
+    assert_eq!(s["expected_nonce"], "0");
+    assert_eq!(s["current_intent"]["transfer"]["value"], "979000");
+    assert!(!s["retired"].as_bool().unwrap());
+    assert!(c.get_signed_transactions().is_empty());
+    ctx("borrower.testnet", 1000);
+    assert!(c.adopt_signature(signature(&c)));
+    assert_eq!(c.get_signed_transactions().len(), 1);
+    confirm(&mut c, "1", 0);
+    assert!(c.get_signed_transactions().is_empty());
+    assert!(c.get_settlement().unwrap().retired);
+}
+fn topup(c: &mut Controller, balance: u128, amount: u128) -> bool {
+    ctx("borrower.testnet", 1000);
+    drop(c.add_fee_budget(
+        bundle(c.loan.as_ref().unwrap().settlement.nonce, balance),
+        U128(amount),
+    ));
+    let p = c.pending.as_ref().unwrap();
+    let id = p.generation;
+    let r: SettlementRequest = serde_json::from_slice(&p.input).unwrap();
+    let e = verify_prepare(&p.input, &observations(&r), 1000).unwrap();
+    context(
+        "controller.testnet",
+        1000,
+        vec![PromiseResult::Successful(serde_json::to_vec(&e).unwrap())],
+    );
+    c.on_settlement_result(U64(id))
+}
+#[test]
+fn fee_topup_consumes_only_proven_new_incoming_even_after_passive_preparation() {
+    let mut c = cancelled();
+    prepare(&mut c, 20_000, 1);
+    let budget = c.loan.as_ref().unwrap().settlement.fee_budget;
+    prepare(&mut c, 21_000, 1);
+    assert_eq!(
+        c.loan.as_ref().unwrap().settlement.accounted_balance,
+        20_000
+    );
+    assert!(topup(&mut c, 21_000, 1_000));
+    assert_eq!(
+        c.loan.as_ref().unwrap().settlement.fee_budget,
+        budget + 1_000
+    );
+    assert!(!topup(&mut c, 21_000, 1_000));
+    assert_eq!(
+        c.loan.as_ref().unwrap().settlement.fee_budget,
+        budget + 1_000
+    );
+    assert!(!topup(&mut c, 22_000, 1_001));
+    assert_eq!(
+        c.loan.as_ref().unwrap().settlement.accounted_balance,
+        21_000
+    );
+    assert!(topup(&mut c, 22_000, 1_000));
+    assert_eq!(
+        c.loan.as_ref().unwrap().settlement.accounted_balance,
+        22_000
+    );
+}
+#[test]
+fn successful_default_lender_cap_precedes_borrower_surplus_and_partial_zero_closes_shortfall() {
+    let mut c = funded();
+    c.vault = Some(VAULT.into());
+    ctx("borrower.testnet", 1000);
+    c.borrow();
+    ctx("lender.testnet", 1120);
+    c.declare_default();
+    let cap = default_cap_wei(&c.loan.as_ref().unwrap().terms).unwrap();
+    prepare(&mut c, cap + 1_000_000, 1);
+    assert_eq!(
+        c.loan
+            .as_ref()
+            .unwrap()
+            .settlement
+            .intent
+            .as_ref()
+            .unwrap()
+            .transfer
+            .value,
+        cap
+    );
+    ctx("borrower.testnet", 1000);
+    assert!(c.adopt_signature(signature(&c)));
+    confirm(&mut c, "1", 979_000);
+    prepare(&mut c, 979_000, 1);
+    assert_eq!(
+        c.loan
+            .as_ref()
+            .unwrap()
+            .settlement
+            .intent
+            .as_ref()
+            .unwrap()
+            .transfer
+            .to,
+        [0x11; 20]
+    );
+    ctx("borrower.testnet", 1000);
+    assert!(c.adopt_signature(signature(&c)));
+    confirm(&mut c, "1", 0);
+    let s = &c.loan.as_ref().unwrap().settlement;
+    assert_eq!(
+        (s.lender_paid, s.borrower_surplus, s.fees_paid, s.shortfall),
+        (cap, 958_000, 42_000, 0)
+    );
+    let mut c = funded();
+    c.vault = Some(VAULT.into());
+    ctx("borrower.testnet", 1000);
+    c.borrow();
+    ctx("lender.testnet", 1120);
+    c.declare_default();
+    prepare(&mut c, 1_000_000, 1);
+    ctx("borrower.testnet", 1000);
+    assert!(c.adopt_signature(signature(&c)));
+    confirm(&mut c, "1", 0);
+    assert_eq!(c.loan.as_ref().unwrap().phase, LoanPhase::Closed);
+    assert_eq!(c.loan.as_ref().unwrap().settlement.shortfall, 101_000_000);
+}
+#[test]
+fn repay_release_never_consumes_or_mints_lender_credit_claim() {
+    let mut c = funded();
+    c.vault = Some(VAULT.into());
+    ctx("lender.testnet", 1000);
+    c.ft_transfer(id("borrower.testnet"), U128(1_000_000), None);
+    ctx("borrower.testnet", 1000);
+    c.borrow();
+    c.repay();
+    prepare(&mut c, 1_000_000, 1);
+    ctx("borrower.testnet", 1000);
+    assert!(c.adopt_signature(signature(&c)));
+    confirm(&mut c, "1", 0);
+    assert_eq!(c.loan.as_ref().unwrap().claim, 101_000_000);
+    ctx("lender.testnet", 1000);
+    c.claim_credit();
+    assert_eq!(c.ft_total_supply().0, 1_000_000_000);
+    assert_eq!(c.ft_balance_of(id("lender.testnet")).0, 1_000_000_000);
+}
+fn alternate_signature(
+    c: &Controller,
+    secret: u8,
+    k: u64,
+    change: impl FnOnce(&mut proofcredit_loan_core::TransferIntent),
+) -> String {
+    use k256::ecdsa::hazmat::SignPrimitive;
+    let mut intent = c
+        .loan
+        .as_ref()
+        .unwrap()
+        .settlement
+        .intent
+        .as_ref()
+        .unwrap()
+        .transfer;
+    change(&mut intent);
+    let key = k256::ecdsa::SigningKey::from_bytes((&[secret; 32]).into()).unwrap();
+    // Fixed ephemeral scalars are exclusively synthetic test fixtures, never an operational signer.
+    let (s, rec) = key
+        .as_nonzero_scalar()
+        .as_ref()
+        .try_sign_prehashed(
+            k256::Scalar::from(k),
+            &signing_digest(&intent).unwrap().into(),
+        )
+        .unwrap();
+    let rec = rec.unwrap();
+    let bytes = s.to_bytes();
+    let mut r = vec![2 + rec.to_byte()];
+    r.extend_from_slice(&bytes[..32]);
+    serde_json::json!({"scheme":"Secp256k1","big_r":{"affine_point":hx(&r)[2..]},"s":{"scalar":hx(&bytes[32..])[2..]},"recovery_id":rec.to_byte()}).to_string()
+}
+#[test]
+fn four_equivalent_signature_aliases_are_bounded_and_nonce_consumption_invalidates_every_alias() {
+    let mut c = cancelled();
+    prepare(&mut c, 1_000_000, 1);
+    ctx("borrower.testnet", 1000);
+    let packets: Vec<_> = (1..=5)
+        .map(|k| alternate_signature(&c, 0x11, k, |_| {}))
+        .collect();
+    for p in &packets[..4] {
+        assert!(c.adopt_signature(p.clone()));
+    }
+    assert_eq!(c.get_signed_transactions().len(), 4);
+    assert!(!c.adopt_signature(packets[4].clone()));
+    assert!(c.adopt_signature(packets[1].clone()));
+    let chosen = c.get_signed_transactions()[2].hash.clone();
+    confirm_candidate(&mut c, 2, "1", 0);
+    assert!(c.get_signed_transactions().is_empty());
+    ctx("borrower.testnet", 1000);
+    assert!(!c.adopt_signature(packets[0].clone()));
+    panic(|| {
+        drop(c.confirm_settlement(
+            chosen,
+            ConfirmationBundle {
+                checkpoint: bundle(1, 0),
+                transaction_index: "0".into(),
+            },
+            None,
+        ));
+    });
+}
+#[test]
+fn wrong_payload_signature_vault_scheme_recovery_and_scalar_are_rejected_without_unlocking() {
+    let mut c = cancelled();
+    prepare(&mut c, 1_000_000, 1);
+    ctx("borrower.testnet", 1000);
+    let bad = [
+        alternate_signature(&c, 0x11, 1, |i| i.nonce += 1),
+        alternate_signature(&c, 0x11, 1, |i| i.value -= 1),
+        alternate_signature(&c, 0x11, 1, |i| i.gas_price += 1),
+        alternate_signature(&c, 0x11, 1, |i| i.to = [0x22; 20]),
+        alternate_signature(&c, 0x12, 1, |_| {}),
+    ];
+    for packet in bad {
+        assert!(!c.adopt_signature(packet));
+        assert!(c.get_signed_transactions().is_empty());
+    }
+    for (field, value) in [
+        ("scheme", serde_json::json!("Ed25519")),
+        ("recovery_id", serde_json::json!(2)),
+        ("extra", serde_json::json!(true)),
+    ] {
+        let mut p: serde_json::Value = serde_json::from_str(&signature(&c)).unwrap();
+        p[field] = value;
+        assert!(!c.adopt_signature(p.to_string()));
+    }
+    let mut p: serde_json::Value = serde_json::from_str(&signature(&c)).unwrap();
+    p["s"]["scalar"] = serde_json::json!("00".repeat(32));
+    assert!(!c.adopt_signature(p.to_string()));
+    assert!(c.loan.as_ref().unwrap().settlement.intent.is_some());
+}
+#[test]
+fn settlement_callback_bounds_clock_field_binding_and_fee_floor_preserve_branch_lock() {
+    for mutation in [
+        "request_hash",
+        "beneficiary",
+        "expected_nonce",
+        "generation",
+        "base_fee_per_gas",
+    ] {
+        let mut c = cancelled();
+        ctx("borrower.testnet", 1000);
+        drop(c.prepare_settlement(bundle(0, 1_000_000), U128(1)));
+        let p = c.pending.as_ref().unwrap();
+        let request = p.generation;
+        let r: SettlementRequest = serde_json::from_slice(&p.input).unwrap();
+        let e = verify_prepare(&p.input, &observations(&r), 1000).unwrap();
+        let mut v = serde_json::to_value(e).unwrap();
+        v[mutation] = serde_json::json!(if mutation == "request_hash" {
+            hx(&[0; 32])
+        } else if mutation == "beneficiary" {
+            hx(&[0x33; 20])
+        } else if mutation == "generation" {
+            "3".into()
+        } else {
+            "2".into()
+        });
+        context(
+            "controller.testnet",
+            1000,
+            vec![PromiseResult::Successful(serde_json::to_vec(&v).unwrap())],
+        );
+        assert!(!c.on_settlement_result(U64(request)), "{mutation}");
+        assert!(c.loan.as_ref().unwrap().settlement.intent.is_none());
+        assert_eq!(c.loan.as_ref().unwrap().phase, LoanPhase::CancelLocked);
+    }
+    for results in [
+        vec![],
+        vec![PromiseResult::Failed, PromiseResult::Failed],
+        vec![PromiseResult::Successful(vec![b' '; 8193])],
+    ] {
+        let mut c = cancelled();
+        ctx("borrower.testnet", 1000);
+        drop(c.prepare_settlement(bundle(0, 1_000_000), U128(1)));
+        let request = c.pending.as_ref().unwrap().generation;
+        context("controller.testnet", 1000, results);
+        assert!(!c.on_settlement_result(U64(request)));
+        assert!(c.loan.as_ref().unwrap().settlement.intent.is_none());
+    }
+    let mut c = cancelled();
+    ctx("borrower.testnet", 1000);
+    drop(c.prepare_settlement(bundle(0, 1_000_000), U128(1)));
+    let p = c.pending.as_ref().unwrap();
+    let request = p.generation;
+    let r: SettlementRequest = serde_json::from_slice(&p.input).unwrap();
+    let e = verify_prepare(&p.input, &observations(&r), 1000).unwrap();
+    context(
+        "controller.testnet",
+        1601,
+        vec![PromiseResult::Successful(serde_json::to_vec(&e).unwrap())],
+    );
+    assert!(!c.on_settlement_result(U64(request)));
+    assert_eq!(c.loan.as_ref().unwrap().phase, LoanPhase::CancelLocked);
+}
+#[test]
+fn settlement_module_and_digest_are_pinned_and_confirmation_timeout_keeps_signed_candidates() {
+    let mut c = cancelled();
+    ctx("borrower.testnet", 1000);
+    drop(c.prepare_settlement(bundle(0, 1_000_000), U128(1)));
+    let calls = get_created_receipts();
+    let args = calls
+        .iter()
+        .flat_map(|r| r.actions.iter())
+        .find_map(|a| {
+            if let MockAction::FunctionCallWeight {
+                method_name, args, ..
+            } = a
+            {
+                if method_name == b"request_execution" {
+                    Some(serde_json::from_slice::<serde_json::Value>(args).unwrap())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    assert_eq!(
+        args["source"]["WasmUrl"]["url"],
+        "https://example.com/settlement.wasm"
+    );
+    assert_eq!(
+        args["source"]["WasmUrl"]["hash"],
+        "552ddd26f2a0caaaad9c4e06ec08e24b24ab2c54c57d5b5b1991b03277f639a8"
+    );
+    assert!(args["secrets_ref"].is_null() && args["params"].is_null());
+    assert_eq!(
+        proofcredit_settlement_protocol::settlement_request_digest(
+            args["input_data"].as_str().unwrap().as_bytes()
+        ),
+        c.pending.as_ref().unwrap().input_hash
+    );
+    ctx("borrower.testnet", 1601);
+    c.expire_pending();
+    assert_eq!(
+        c.loan.as_ref().unwrap().settlement.stage,
+        settlement::SettlementStage::Idle
+    );
+    prepare(&mut c, 1_000_000, 1);
+    ctx("borrower.testnet", 1000);
+    assert!(c.adopt_signature(signature(&c)));
+    let hash = c.get_signed_transactions()[0].hash.clone();
+    drop(c.confirm_settlement(
+        hash,
+        ConfirmationBundle {
+            checkpoint: bundle(1, 0),
+            transaction_index: "0".into(),
+        },
+        None,
+    ));
+    let old = c.pending.as_ref().unwrap().generation;
+    ctx("lender.testnet", 1601);
+    c.expire_pending();
+    assert_eq!(
+        c.loan.as_ref().unwrap().settlement.stage,
+        settlement::SettlementStage::Signed
+    );
+    assert!(c.loan.as_ref().unwrap().settlement.intent.is_some());
+    assert_eq!(c.get_signed_transactions().len(), 1);
+    context("controller.testnet", 1601, vec![PromiseResult::Failed]);
+    assert!(!c.on_settlement_result(U64(old)));
+    assert_eq!(c.get_signed_transactions().len(), 1);
+}
+#[test]
+fn closed_participants_can_unregister_and_reregister_after_their_obligations_clear() {
+    use near_contract_standards::storage_management::StorageManagement;
+    use near_sdk::{Gas, NearToken, test_utils::VMContextBuilder, testing_env};
+    let mut c = funded();
+    c.vault = Some(VAULT.into());
+    ctx("lender.testnet", 1000);
+    c.ft_transfer(id("borrower.testnet"), U128(1_000_000), None);
+    ctx("borrower.testnet", 1000);
+    c.borrow();
+    c.repay();
+    prepare(&mut c, 1_000_000, 1);
+    ctx("borrower.testnet", 1000);
+    assert!(c.adopt_signature(signature(&c)));
+    confirm(&mut c, "1", 0);
+    ctx("borrower.testnet", 1000);
+    assert!(c.storage_unregister(None));
+    assert!(c.storage_balance_of(id("borrower.testnet")).is_none());
+    testing_env!(
+        VMContextBuilder::new()
+            .current_account_id(id("controller.testnet"))
+            .predecessor_account_id(id("borrower.testnet"))
+            .block_timestamp(1_000_000_000_000)
+            .attached_deposit(NearToken::from_near(1))
+            .prepaid_gas(Gas::from_tgas(300))
+            .account_balance(NearToken::from_near(100))
+            .build()
+    );
+    c.storage_deposit(None, None);
+    assert!(c.storage_balance_of(id("borrower.testnet")).is_some());
+    ctx("lender.testnet", 1000);
+    panic(|| {
+        c.storage_unregister(Some(true));
+    });
+    c.claim_credit();
+    c.ft_transfer(id("borrower.testnet"), U128(1_000_000_000), None);
+    assert!(c.storage_unregister(None));
+    ctx("controller.testnet", 1000);
+    panic(|| {
+        c.storage_unregister(Some(true));
+    });
+}
+fn historical_header(balance: u128) -> InclusionHeader {
+    let included = bundle(1, balance);
+    InclusionHeader {
+        block_number: included.block_number,
+        block_hash: included.block_hash,
+        state_root: included.state_root,
+        block_timestamp: included.block_timestamp,
+        base_fee_per_gas: "1".into(),
+    }
+}
+fn fresh_checkpoint(balance: u128, now: u64) -> SettlementBundle {
+    let mut fresh = bundle(1, balance);
+    fresh.block_number = "124".into();
+    fresh.block_hash = hx(&[0x55; 32]);
+    fresh.block_timestamp = now.to_string();
+    fresh
+}
+#[test]
+fn superseded_fifth_signature_can_confirm_actual_inclusion_without_a_fifth_relay_alias() {
+    let mut c = cancelled();
+    prepare(&mut c, 1_000_000, 1);
+    ctx("borrower.testnet", 1000);
+    let packets: Vec<_> = (1..=5)
+        .map(|k| alternate_signature(&c, 0x11, k, |_| {}))
+        .collect();
+    for packet in &packets[..3] {
+        assert!(c.adopt_signature(packet.clone()));
+    }
+    drop(c.request_signature());
+    ctx("borrower.testnet", 1601);
+    c.expire_pending();
+    drop(c.retry_signature());
+    let superseded = c.pending.as_ref().unwrap().generation;
+    assert!(c.adopt_signature(packets[3].clone()));
+    assert_eq!(c.get_signed_transactions().len(), 4);
+    context(
+        "controller.testnet",
+        1601,
+        vec![PromiseResult::Successful(packets[4].as_bytes().to_vec())],
+    );
+    assert!(!c.on_signature_result(U64(superseded)));
+    ctx("borrower.testnet", 1601);
+    assert!(!c.adopt_signature(packets[4].clone()));
+    let f = &c
+        .loan
+        .as_ref()
+        .unwrap()
+        .settlement
+        .intent
+        .as_ref()
+        .unwrap()
+        .transfer;
+    let candidate = proofcredit_loan_core::verify_mpc_signature(
+        f,
+        proofcredit_settlement_protocol::fixed_hex::<20>(VAULT).unwrap(),
+        packets[4].as_bytes(),
+    )
+    .unwrap();
+    let hash = hx(&candidate.hash);
+    drop(c.confirm_settlement(
+        hash.clone(),
+        ConfirmationBundle {
+            checkpoint: fresh_checkpoint(0, 1601),
+            transaction_index: "0".into(),
+        },
+        Some(packets[4].clone()),
+    ));
+    assert_eq!(c.get_signed_transactions().len(), 4);
+    let p = c.pending.as_ref().unwrap();
+    let r: SettlementRequest = serde_json::from_slice(&p.input).unwrap();
+    let SettlementPurpose::Confirm {
+        candidate: bound, ..
+    } = &r.purpose
+    else {
+        panic!("wrong purpose")
+    };
+    assert_eq!(bound.hash, hash);
+    let (id, raw) = confirmation_output(&c, "1", 1601, Some(historical_header(0)), "1");
+    context(
+        "controller.testnet",
+        1601,
+        vec![PromiseResult::Successful(raw)],
+    );
+    assert!(c.on_settlement_result(U64(id)));
+    assert!(!c.on_settlement_result(U64(id)));
+    let s = c.get_settlement().unwrap();
+    assert_eq!(
+        (
+            s.expected_nonce.0,
+            s.fees_paid_wei.0,
+            s.borrower_surplus_wei.0
+        ),
+        (1, 21_000, 979_000)
+    );
+    assert_eq!(c.get_signed_transactions().len(), 0);
+    ctx("borrower.testnet", 1601);
+    panic(|| {
+        drop(c.confirm_settlement(
+            hash,
+            ConfirmationBundle {
+                checkpoint: fresh_checkpoint(0, 1601),
+                transaction_index: "0".into(),
+            },
+            Some(packets[4].clone()),
+        ));
+    });
+}
+#[test]
+fn direct_confirmation_rejects_unknown_missing_forged_mismatched_and_oversized_packets() {
+    let mut c = cancelled();
+    prepare(&mut c, 1_000_000, 1);
+    ctx("borrower.testnet", 1000);
+    let packets: Vec<_> = (1..=5)
+        .map(|k| alternate_signature(&c, 0x11, k, |_| {}))
+        .collect();
+    for p in &packets[..4] {
+        assert!(c.adopt_signature(p.clone()));
+    }
+    let f = &c
+        .loan
+        .as_ref()
+        .unwrap()
+        .settlement
+        .intent
+        .as_ref()
+        .unwrap()
+        .transfer;
+    let candidate = proofcredit_loan_core::verify_mpc_signature(
+        f,
+        proofcredit_settlement_protocol::fixed_hex::<20>(VAULT).unwrap(),
+        packets[4].as_bytes(),
+    )
+    .unwrap();
+    let hash = hx(&candidate.hash);
+    let stored = c.get_signed_transactions()[0].hash.clone();
+    let bad = [
+        None,
+        Some("null".into()),
+        Some(" ".repeat(1025)),
+        Some(alternate_signature(&c, 0x12, 5, |_| {})),
+        Some(alternate_signature(&c, 0x11, 5, |i| i.nonce += 1)),
+        Some(alternate_signature(&c, 0x11, 5, |i| i.value -= 1)),
+    ];
+    for packet in bad {
+        panic(|| {
+            drop(c.confirm_settlement(
+                hash.clone(),
+                ConfirmationBundle {
+                    checkpoint: bundle(1, 0),
+                    transaction_index: "0".into(),
+                },
+                packet,
+            ));
+        });
+        assert!(c.pending.is_none());
+        assert_eq!(c.get_signed_transactions().len(), 4);
+    }
+    for claimed in [hx(&[0; 32]), stored.clone()] {
+        panic(|| {
+            drop(c.confirm_settlement(
+                claimed,
+                ConfirmationBundle {
+                    checkpoint: bundle(1, 0),
+                    transaction_index: "0".into(),
+                },
+                Some(packets[4].clone()),
+            ));
+        });
+        assert!(c.pending.is_none());
+    }
+    // A provided packet is checked even when the hash already names a relay alias.
+    drop(c.confirm_settlement(
+        stored,
+        ConfirmationBundle {
+            checkpoint: bundle(1, 979_000),
+            transaction_index: "0".into(),
+        },
+        Some(packets[0].clone()),
+    ));
+    let (id, raw) = confirmation_output(&c, "0", 1000, None, "1");
+    context(
+        "controller.testnet",
+        1000,
+        vec![PromiseResult::Successful(raw)],
+    );
+    assert!(c.on_settlement_result(U64(id)));
+    assert_eq!(c.get_settlement().unwrap().borrower_surplus_wei.0, 0);
+}
+#[test]
+fn historical_confirmation_records_inclusion_block_and_keeps_fresh_incoming_state_for_next_plan() {
+    let mut c = cancelled();
+    prepare(&mut c, 1_000_000, 1);
+    ctx("borrower.testnet", 1000);
+    assert!(c.adopt_signature(signature(&c)));
+    let hash = c.get_signed_transactions()[0].hash.clone();
+    ctx("borrower.testnet", 10_000);
+    drop(c.confirm_settlement(
+        hash,
+        ConfirmationBundle {
+            checkpoint: fresh_checkpoint(10_000_000, 9900),
+            transaction_index: "0".into(),
+        },
+        None,
+    ));
+    let (id, raw) = confirmation_output(&c, "1", 10_000, Some(historical_header(0)), "100");
+    context(
+        "controller.testnet",
+        10_000,
+        vec![PromiseResult::Successful(raw)],
+    );
+    assert!(c.on_settlement_result(U64(id)));
+    let s = c.get_settlement().unwrap();
+    assert_eq!(s.checkpoint_block_number.unwrap().0, 124);
+    assert_eq!(s.last_confirmation.unwrap().block_number.0, 123);
+    assert_eq!(s.balance_wei.0, 10_000_000);
+    assert!(!s.retired);
+    // The next attempt must meet the fresh checkpoint fee, not the historical inclusion fee.
+    for (price, accepted) in [(1, false), (100, true)] {
+        ctx("borrower.testnet", 10_000);
+        drop(c.prepare_settlement(fresh_checkpoint(10_000_000, 9900), U128(price)));
+        let p = c.pending.as_ref().unwrap();
+        let request = p.generation;
+        let r: SettlementRequest = serde_json::from_slice(&p.input).unwrap();
+        let mut o = observations(&r);
+        for observation in &mut o {
+            observation.base_fee_per_gas = "100".into();
+        }
+        let e = verify_prepare(&p.input, &o, 10_000).unwrap();
+        context(
+            "controller.testnet",
+            10_000,
+            vec![PromiseResult::Successful(serde_json::to_vec(&e).unwrap())],
+        );
+        assert_eq!(c.on_settlement_result(U64(request)), accepted);
+    }
+    let intent = c.get_settlement().unwrap().current_intent.unwrap().transfer;
+    assert_eq!(
+        (
+            intent.nonce.as_str(),
+            intent.value.as_str(),
+            intent.gas_price.as_str()
+        ),
+        ("1", "7900000", "100")
+    );
+}

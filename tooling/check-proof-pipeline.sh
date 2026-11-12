@@ -17,7 +17,7 @@ python3 - <<'PIN'
 from pathlib import Path
 import hashlib
 pins = {
- 'target/wasm32-unknown-unknown/release/proofcredit_controller.wasm': '0f4b582d1c1240fbbfe5617daf2431501b9c1b1bd089612f512b786b5ea7b2b4',
+ 'target/wasm32-unknown-unknown/release/proofcredit_controller.wasm': '49c0c7588a18ce584a54276ea1eb4086cc0a3c17030f88bab2706339291d9d63',
  'target/wasm32-wasip2/release/proofcredit-proof-worker.wasm': 'be818d821f076d5e1dbf3650b03811b7658c85b14fd5c2fa7abce4ac87184c69',
  'target/wasm32-unknown-unknown/release/proofcredit_pipeline_services.wasm': 'f9cdcc14eb15f7f77849f8be95e0e058bca0cd986a6831f94747e2c5157a7c2a',
  '.tools/near-sandbox/2.14.0/near-sandbox': '8e0e1521372b0fce801b7464078c1e95e5a25a0f92ad4b4241451c33fe9e5a2a',

@@ -20,7 +20,7 @@ done
 python3 - "$ROOT" <<'PY'
 import hashlib, pathlib, sys
 root=pathlib.Path(sys.argv[1])
-for name,expected in [('proofcredit-proof-worker','be818d821f076d5e1dbf3650b03811b7658c85b14fd5c2fa7abce4ac87184c69'),('proofcredit-settlement-worker','986b205eb5287e20ceb0a43db918607402fc524bd056126437ae441c5f07cb6a')]:
+for name,expected in [('proofcredit-proof-worker','be818d821f076d5e1dbf3650b03811b7658c85b14fd5c2fa7abce4ac87184c69'),('proofcredit-settlement-worker','552ddd26f2a0caaaad9c4e06ec08e24b24ab2c54c57d5b5b1991b03277f639a8')]:
     actual=hashlib.sha256((root/'target/wasm32-wasip2/release'/f'{name}.wasm').read_bytes()).hexdigest()
     print(f'{name} sha256={actual}')
     if actual != expected: raise SystemExit('canonical guest bytes differ from reviewed Task4 fixtures')

@@ -11,6 +11,7 @@ struct Transport {
     calls: RefCell<Vec<(String, String, Value)>>,
     fault: Option<(&'static str, Value)>,
     status: u16,
+    fault_id: Option<(u32, Value)>,
 }
 impl RpcTransport for Transport {
     fn post(&self, p: Provider, request: &[u8]) -> Result<RpcResponse, WorkerError> {
@@ -20,7 +21,13 @@ impl RpcTransport for Transport {
         self.calls
             .borrow_mut()
             .push((p.id.into(), method.into(), q["params"].clone()));
-        let result = if let Some((m, ref value)) = self.fault {
+        let result = if let Some((id, ref value)) = self.fault_id {
+            if q["id"] == id {
+                value.clone()
+            } else {
+                self.answer(method, &q["params"])
+            }
+        } else if let Some((m, ref value)) = self.fault {
             if m == method {
                 value.clone()
             } else {
@@ -42,10 +49,18 @@ impl Transport {
         match m {
             "eth_chainId" => json!("0xaa36a7"),
             "eth_getBlockByNumber" => {
+                let number = self.r.bundle.block_number.parse::<u64>().unwrap();
                 if params[0] == "finalized" {
-                    json!({"number":"0x7b"})
+                    json!({"number":format!("0x{number:x}")})
+                } else if number == 124 && params[0] == "0x7b" {
+                    json!({"number":"0x7b","hash":hx(&[0x44;32]),"stateRoot":hx(&[0x66;32]),"timestamp":"0x3e8","baseFeePerGas":"0x2540be400"})
                 } else {
-                    json!({"number":"0x7b","hash":self.r.bundle.block_hash,"stateRoot":self.r.bundle.state_root,"timestamp":"0x26ac","baseFeePerGas":"0x2540be400","normalExtra":"accepted"})
+                    let fee = if number == 124 {
+                        "0x2e90edd000"
+                    } else {
+                        "0x2540be400"
+                    };
+                    json!({"number":format!("0x{number:x}"),"hash":self.r.bundle.block_hash,"stateRoot":self.r.bundle.state_root,"timestamp":"0x26ac","baseFeePerGas":fee,"normalExtra":"accepted"})
                 }
             }
             "eth_getTransactionByHash" => {
@@ -68,6 +83,7 @@ fn t(r: SettlementRequest) -> Transport {
         calls: RefCell::new(vec![]),
         fault: None,
         status: 200,
+        fault_id: None,
     }
 }
 #[test]
@@ -167,4 +183,46 @@ fn requested_header_requires_canonical_base_fee_and_binds_output() {
     let output = run_settlement(&enc(&r), &t(r), NOW).unwrap();
     let evidence: SettlementEvidence = serde_json::from_slice(&output).unwrap();
     assert_eq!(evidence.base_fee_per_gas, "10000000000");
+}
+
+#[test]
+fn historical_receipt_fetches_both_canonical_inclusion_headers_and_fresh_state() {
+    let (r, _) = historical_confirm_fixture("1", 3_000_000_000_000_000);
+    let transport = t(r.clone());
+    let output = run_settlement(&enc(&r), &transport, NOW).unwrap();
+    let evidence: SettlementEvidence = serde_json::from_slice(&output).unwrap();
+    assert_eq!(evidence.block_number, "124");
+    assert_eq!(evidence.inclusion_header.unwrap().block_timestamp, "1000");
+    assert_eq!(evidence.base_fee_per_gas, "200000000000");
+    assert_eq!(transport.calls.borrow().len(), 12);
+    for provider in PROVIDERS {
+        let calls = transport.calls.borrow();
+        let headers: Vec<_> = calls
+            .iter()
+            .filter(|(p, m, _)| p == provider.id && m == "eth_getBlockByNumber")
+            .map(|(_, _, params)| params.clone())
+            .collect();
+        assert_eq!(
+            headers,
+            vec![
+                json!(["finalized", false]),
+                json!(["0x7c", false]),
+                json!(["0x7b", false])
+            ]
+        );
+    }
+}
+#[test]
+fn historical_inclusion_header_null_wrong_canonical_hash_or_fee_fails_closed() {
+    let (r, _) = historical_confirm_fixture("1", 3_000_000_000_000_000);
+    assert!(run_settlement(&enc(&r), &t(r.clone()), NOW).is_ok());
+    for value in [
+        Value::Null,
+        json!({"number":"0x7b","hash":hx(&[0x77;32]),"stateRoot":hx(&[0x66;32]),"timestamp":"0x3e8","baseFeePerGas":"0x2540be400"}),
+        json!({"number":"0x7b","hash":hx(&[0x44;32]),"stateRoot":hx(&[0x66;32]),"timestamp":"0x3e8","baseFeePerGas":"0x01"}),
+    ] {
+        let mut transport = t(r.clone());
+        transport.fault_id = Some((6, value));
+        assert!(run_settlement(&enc(&r), &transport, NOW).is_err());
+    }
 }
