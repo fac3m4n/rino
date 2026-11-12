@@ -390,3 +390,31 @@ it("a public lender whose CREDIT side is funded is directed to the borrower ETH 
     }),
   ).toContain("Switch to the borrower");
 });
+
+it.each(["0", "1", "999999"])(
+  "keeps the public fee endowment repair reachable with funded liquidity and %s borrower units",
+  (balance) => {
+    const s: State = {
+      ...state,
+      market: {
+        ...state.market!,
+        phase: "Offered",
+        borrower_balance_units: balance,
+      },
+    };
+    expect(
+      actionGuard("fund", { ...config, mode: "public" }, s, "lender", {
+        nearAccount: "lender.test",
+      }),
+    ).toBeNull();
+    expect(offeredAction(s, "lender", "public")).toBe("fund");
+  },
+);
+
+it("keeps local offer routing unchanged by the public fee endowment repair", () => {
+  const s: State = {
+    ...state,
+    market: { ...state.market!, phase: "Offered", borrower_balance_units: "1" },
+  };
+  expect(offeredAction(s, "lender", "local")).toBe("borrow");
+});

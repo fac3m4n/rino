@@ -395,7 +395,7 @@ export default function App() {
     "Initialize the local actors and fixed loan terms. Every action below executes against the running chains.";
   if (market?.vault) {
     if (market.phase === "Offered") {
-      const offered = offeredAction(state!, role);
+      const offered = offeredAction(state!, role, config!.mode);
       if (offered === "fund") {
         primary = "fund";
         stageTitle = "Put your ETH to work.";
@@ -408,6 +408,16 @@ export default function App() {
           stageTitle = "Restore the CREDIT offer.";
           stageCopy =
             "The vault already holds sufficient ETH. Fund 100 CREDIT in lender escrow without depositing more collateral.";
+        }
+        if (
+          !local &&
+          role === "lender" &&
+          BigInt(market.available_liquidity_units) >=
+            BigInt(market.terms.principal_units)
+        ) {
+          stageTitle = "Restore the borrower fee endowment.";
+          stageCopy =
+            "The CREDIT offer is funded. Transfer only the missing amount to give the borrower the 1 CREDIT demonstration repayment fee.";
         }
       } else if (offered === "prove") {
         primary = "prove";

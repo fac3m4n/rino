@@ -85,7 +85,8 @@ export function actionGuard(
     config.mode === "public" &&
     role === "lender" &&
     BigInt(market.available_liquidity_units) >=
-      BigInt(market.terms.principal_units)
+      BigInt(market.terms.principal_units) &&
+    BigInt(market.borrower_balance_units) >= 1000000n
   )
     return "The CREDIT offer is funded. Switch to the borrower to fund or authenticate ETH collateral.";
   if (action === "recover" && state.settlement?.retired)
@@ -179,12 +180,18 @@ export function loanHistory(state: State | undefined): {
   };
 }
 
-export function offeredAction(state: State, role: Role): ActionName {
+export function offeredAction(
+  state: State,
+  role: Role,
+  mode: Config["mode"] = "local",
+): ActionName {
   if (
     role === "lender" &&
     state.market &&
-    BigInt(state.market.available_liquidity_units) <
-      BigInt(state.market.terms.principal_units)
+    (BigInt(state.market.available_liquidity_units) <
+      BigInt(state.market.terms.principal_units) ||
+      (mode === "public" &&
+        BigInt(state.market.borrower_balance_units) < 1000000n))
   )
     return "fund";
   return !state.market ||

@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { ROOT } from "./processes.ts";
 import { Journal, SerialQueue, verifyRelay } from "./safety.ts";
 import { PINS } from "./local.ts";
+import { collateralSufficient } from "./collateral.ts";
 import type {
   ActionRequest,
   ActionResult,
@@ -14,6 +15,7 @@ import type {
   Settlement,
   SignedTransaction,
   State,
+  Terms,
   WalletAction,
 } from "./api.ts";
 const URLS = [
@@ -21,10 +23,13 @@ const URLS = [
   "https://public.1rpc.io/sepolia",
 ] as const;
 interface Deployment {
-  version: 1;
+  version: 2;
   controllerId: string;
   borrowerId: string;
   lenderId: string;
+  borrowerRecipient: string;
+  lenderRecipient: string;
+  operationDeposit: string;
   controllerCodeHash: string;
   collateralUrl: string;
   settlementUrl: string;
@@ -91,10 +96,31 @@ export class PublicCoordinator {
     const d = JSON.parse(await readFile(path, "utf8")) as Deployment;
     if (
       Object.keys(d).sort().join(",") !==
-        "borrowerId,collateralUrl,controllerCodeHash,controllerId,lenderId,settlementUrl,version" ||
-      d.version !== 1
+        "borrowerId,borrowerRecipient,collateralUrl,controllerCodeHash,controllerId,lenderId,lenderRecipient,operationDeposit,settlementUrl,version" ||
+      d.version !== 2
     )
-      throw Error("public deployment manifest schema rejected");
+      throw Error(
+        "public deployment manifest schema rejected; create a complete version 2 manifest binding borrowerRecipient, lenderRecipient and operationDeposit to the reviewed initialization payload",
+      );
+    if (
+      typeof d.operationDeposit !== "string" ||
+      !/^(0|[1-9][0-9]*)$/.test(d.operationDeposit) ||
+      d.operationDeposit.length > 23 ||
+      BigInt(d.operationDeposit) > 50000000000000000000000n
+    )
+      throw Error(
+        "canonical operation deposit within constructor cap required",
+      );
+    if (
+      [d.borrowerRecipient, d.lenderRecipient].some(
+        (address) =>
+          typeof address !== "string" ||
+          !/^0x[0-9a-fA-F]{40}$/.test(address) ||
+          /^0x0{40}$/.test(address),
+      ) ||
+      d.borrowerRecipient.toLowerCase() === d.lenderRecipient.toLowerCase()
+    )
+      throw Error("valid distinct Sepolia recipients required");
     for (const id of [d.controllerId, d.borrowerId, d.lenderId])
       if (!/^[a-z0-9._-]+\.testnet$/.test(id))
         throw Error("testnet account required");
@@ -156,7 +182,12 @@ export class PublicCoordinator {
         config.wasm_url !== this.deployment.collateralUrl ||
         config.wasm_sha256 !== PINS.collateral ||
         config.network !== "NearTestnet" ||
+        config.operation_deposit !== this.deployment.operationDeposit ||
         market?.lender !== this.deployment.lenderId ||
+        market?.borrower_recipient?.toLowerCase() !==
+          this.deployment.borrowerRecipient.toLowerCase() ||
+        market?.lender_recipient?.toLowerCase() !==
+          this.deployment.lenderRecipient.toLowerCase() ||
         market?.terms.term_seconds !== "86400" ||
         market?.settlement_wasm_url !== this.deployment.settlementUrl ||
         market?.settlement_wasm_sha256 !== PINS.settlement
@@ -239,6 +270,7 @@ export class PublicCoordinator {
     to?: string,
     nonce = "0",
     minimumBlock = 0n,
+    collateral?: { terms: Terms; liveBalance: unknown },
   ): Promise<any> {
     const file = resolve(
       this.directory,
@@ -254,6 +286,11 @@ export class PublicCoordinator {
     if (
       !captured ||
       captured.vault !== vault ||
+      // Provider balance is only a cache invalidation hint. The worker and
+      // controller still authenticate the unchanged account proof itself.
+      (collateral &&
+        !collateralSufficient(collateral.terms, captured.balanceWei) &&
+        collateralSufficient(collateral.terms, collateral.liveBalance)) ||
       BigInt(captured.bundle.block_number) < minimumBlock ||
       now - BigInt(captured.bundle.block_timestamp) > 3600n
     ) {
@@ -294,7 +331,11 @@ export class PublicCoordinator {
             ).accountProof,
           }
         : { ...base, account_proof: p.accountProof };
-      captured = { vault, bundle };
+      captured = {
+        vault,
+        bundle,
+        ...(!to ? { balanceWei: BigInt(p.balance).toString() } : {}),
+      };
       await writeFile(file, JSON.stringify(captured), { mode: 0o600 });
     }
     const finals = await Promise.all(
@@ -343,11 +384,16 @@ export class PublicCoordinator {
           walletActions = [this.wallet("initialize_vault")];
           break;
         case "fund":
-          if (m.borrower_balance_units === "0")
+          if (BigInt(m.borrower_balance_units) < 1000000n)
             walletActions.push(
               this.wallet(
                 "ft_transfer",
-                { receiver_id: m.borrower, amount: "1000000" },
+                {
+                  receiver_id: m.borrower,
+                  amount: (
+                    1000000n - BigInt(m.borrower_balance_units)
+                  ).toString(),
+                },
                 "1",
               ),
             );
@@ -358,7 +404,10 @@ export class PublicCoordinator {
           if (!m.vault) throw Error("derive vault first");
           walletActions = [
             this.wallet("request_proof", {
-              bundle: await this.bundle(m.vault),
+              bundle: await this.bundle(m.vault, undefined, "0", 0n, {
+                terms: m.terms,
+                liveBalance: state.ethereum?.vaultBalanceWei,
+              }),
             }),
           ];
           break;

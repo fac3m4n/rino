@@ -17,10 +17,13 @@ async function fixture() {
   await writeFile(
     manifest,
     JSON.stringify({
-      version: 1,
+      version: 2,
       controllerId: `capture-${randomUUID().slice(0, 18)}.testnet`,
       borrowerId: "borrower.testnet",
       lenderId: "lender.testnet",
+      borrowerRecipient: "0x1111111111111111111111111111111111111111",
+      lenderRecipient: "0x2222222222222222222222222222222222222222",
+      operationDeposit: "7000100000000000000000",
       controllerCodeHash: "11111111111111111111111111111111",
       collateralUrl: "https://published.example/collateral.wasm",
       settlementUrl: "https://published.example/settlement.wasm",
