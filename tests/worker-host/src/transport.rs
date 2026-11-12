@@ -35,13 +35,36 @@ pub struct Trace {
     pub clean_completions_before_response: Arc<AtomicUsize>,
 }
 pub struct Hooks {
+    alchemy_path: String,
     adapter: Adapter,
     pub trace: Trace,
     gate: Duration,
     tiny: bool,
 }
+pub const LOCAL_ALCHEMY_KEY: &str = "proofcredit-local-test-key";
+pub const CREDENTIAL_ERROR: &str = "Alchemy credential missing or invalid";
+/// Separate host validation: no ambient environment is consulted by library APIs.
+pub fn alchemy_path(key: &str) -> Result<String> {
+    ensure!(
+        (8..=128).contains(&key.len())
+            && key
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'),
+        CREDENTIAL_ERROR
+    );
+    Ok(format!("/v2/{key}"))
+}
 impl Hooks {
     pub fn new(adapter: Adapter) -> Result<Self> {
+        ensure!(!matches!(adapter, Adapter::Production), CREDENTIAL_ERROR);
+        Self::with_credential(adapter, LOCAL_ALCHEMY_KEY)
+    }
+    /// Production accepts only this explicit key; never inherit the host environment.
+    pub fn production(key: &str) -> Result<Self> {
+        Self::with_credential(Adapter::Production, key)
+    }
+    fn with_credential(adapter: Adapter, key: &str) -> Result<Self> {
+        let alchemy_path = alchemy_path(key)?;
         if let Adapter::LocalSandbox(c) = &adapter {
             ensure!(
                 c.tls_address.ip().is_loopback(),
@@ -50,6 +73,7 @@ impl Hooks {
             ensure!(!c.ca_der.is_empty(), "local CA missing");
         }
         Ok(Self {
+            alchemy_path,
             adapter,
             trace: Trace::default(),
             gate: Duration::ZERO,
@@ -64,21 +88,23 @@ impl Hooks {
         self
     }
 }
-pub fn allowed(request: &http::Request<WasiBody>) -> bool {
-    request.method() == http::Method::POST
-        && request.uri().scheme_str() == Some("https")
-        && matches!(
-            (
+impl Hooks {
+    fn allowed(&self, request: &http::Request<WasiBody>) -> bool {
+        request.method() == http::Method::POST
+            && request.uri().scheme_str() == Some("https")
+            && match (
                 request.uri().authority().map(|a| a.as_str()),
-                request.uri().path_and_query().map(|p| p.as_str())
-            ),
-            (Some("ethereum-sepolia-rpc.publicnode.com"), Some("/"))
-                | (Some("public.1rpc.io"), Some("/sepolia"))
-        )
-        && request
-            .headers()
-            .get("content-type")
-            .is_some_and(|v| v == "application/json")
+                request.uri().path_and_query().map(|p| p.as_str()),
+            ) {
+                (Some("ethereum-sepolia-rpc.publicnode.com"), Some("/")) => true,
+                (Some("eth-sepolia.g.alchemy.com"), Some(path)) => path == self.alchemy_path,
+                _ => false,
+            }
+            && request
+                .headers()
+                .get("content-type")
+                .is_some_and(|v| v == "application/json")
+    }
 }
 impl WasiHttpHooks for Hooks {
     fn p2_outgoing_body_buffer_chunks(&mut self) -> usize {
@@ -93,14 +119,16 @@ impl WasiHttpHooks for Hooks {
         options: Option<RequestOptions>,
         _: IoFuture,
     ) -> SendFuture {
-        if !allowed(&request) {
+        if !self.allowed(&request) {
             return Box::new(async { Err(Error::HttpRequestDenied) });
         }
-        self.trace
-            .destinations
-            .lock()
-            .unwrap()
-            .push(request.uri().to_string());
+        self.trace.destinations.lock().unwrap().push(
+            if request.uri().host() == Some("eth-sepolia.g.alchemy.com") {
+                "https://eth-sepolia.g.alchemy.com/v2/[REDACTED]".to_owned()
+            } else {
+                "https://ethereum-sepolia-rpc.publicnode.com/".to_owned()
+            },
+        );
         let adapter = self.adapter.clone();
         let trace = self.trace.clone();
         let gate = self.gate;
@@ -203,5 +231,77 @@ impl WasiHttpHooks for Hooks {
                 }) as IoFuture,
             ))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use http_body_util::Full;
+    fn request(uri: &str) -> http::Request<WasiBody> {
+        http::Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(
+                Full::new(Bytes::new())
+                    .map_err(|e| match e {})
+                    .boxed_unsync(),
+            )
+            .unwrap()
+    }
+    #[test]
+    fn explicit_secret_selects_only_exact_https_authority_and_path_and_redacts_trace() {
+        let mut hooks = Hooks::production("secret_TEST-123").unwrap();
+        for uri in [
+            "https://eth-sepolia.g.alchemy.com/v2/secret_TEST-123",
+            "https://ethereum-sepolia-rpc.publicnode.com/",
+        ] {
+            assert!(hooks.allowed(&request(uri)));
+            let future = hooks.send_request(request(uri), None, Box::new(async { Ok(()) }));
+            // Dropping without polling proves tracing without initiating public network I/O.
+            drop(future);
+        }
+        assert_eq!(
+            *hooks.trace.destinations.lock().unwrap(),
+            [
+                "https://eth-sepolia.g.alchemy.com/v2/[REDACTED]",
+                "https://ethereum-sepolia-rpc.publicnode.com/"
+            ]
+        );
+        for uri in [
+            "http://eth-sepolia.g.alchemy.com/v2/secret_TEST-123",
+            "https://eth-sepolia.g.alchemy.com:443/v2/secret_TEST-123",
+            "https://eth-sepolia.g.alchemy.com:444/v2/secret_TEST-123",
+            "https://eth-sepolia.g.alchemy.com.attacker.invalid/v2/secret_TEST-123",
+            "https://user@eth-sepolia.g.alchemy.com/v2/secret_TEST-123",
+            "https://eth-sepolia.g.alchemy.com/v2/other_key",
+            "https://eth-sepolia.g.alchemy.com/v2/secret_TEST-123/",
+            "https://eth-sepolia.g.alchemy.com/v2/secret_TEST-123?query",
+            "https://eth-sepolia.g.alchemy.com/v2/%73ecret_TEST-123",
+            "https://public.1rpc.io/sepolia",
+            "https://ethereum-sepolia-rpc.publicnode.com/?query",
+        ] {
+            assert!(!hooks.allowed(&request(uri)), "unexpected allowed URI");
+        }
+        let mut wrong_method = request("https://eth-sepolia.g.alchemy.com/v2/secret_TEST-123");
+        *wrong_method.method_mut() = http::Method::GET;
+        assert!(!hooks.allowed(&wrong_method));
+        let mut wrong_type = request("https://eth-sepolia.g.alchemy.com/v2/secret_TEST-123");
+        wrong_type.headers_mut().remove("content-type");
+        assert!(!hooks.allowed(&wrong_type));
+        let denied = hooks.send_request(wrong_method, None, Box::new(async { Ok(()) }));
+        drop(denied);
+        assert_eq!(hooks.trace.destinations.lock().unwrap().len(), 2);
+    }
+    #[test]
+    fn production_secret_validation_has_fixed_diagnostics() {
+        for key in ["", "short", "with/slash", "unicodeé", &"a".repeat(129)] {
+            let error = Hooks::production(key).err().expect("invalid key accepted");
+            assert_eq!(error.to_string(), "Alchemy credential missing or invalid");
+        }
+        assert!(Hooks::production(&"a".repeat(8)).is_ok());
+        assert!(Hooks::production(&"Z".repeat(128)).is_ok());
     }
 }

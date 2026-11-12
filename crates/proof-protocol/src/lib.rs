@@ -9,7 +9,7 @@ pub use verify::*;
 pub const SCHEMA_VERSION: u32 = 1;
 pub const POLICY_ID: &str = "rpc-finalized-2of2-v1";
 pub const CHAIN_ID: u64 = 11_155_111;
-pub const PROVIDER_IDS: [&str; 2] = ["publicnode", "automata"];
+pub const PROVIDER_IDS: [&str; 2] = ["publicnode", "alchemy"];
 pub const MAX_INPUT_BYTES: usize = 32768;
 pub const MAX_OUTPUT_BYTES: usize = 8192;
 pub const MAX_RPC_BYTES: usize = 262144;

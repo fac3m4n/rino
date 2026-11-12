@@ -99,7 +99,19 @@ impl Runner {
             Adapter::Production => (None, "Production"),
             Adapter::LocalSandbox(c) => (Some(c.owned_near_unix_seconds), "LocalSandbox"),
         };
-        self.run_inner(input, now, mode, Box::new(transport::Hooks::new(adapter)?))
+        self.run_inner(
+            input,
+            now,
+            mode,
+            Box::new(transport::Hooks::new(adapter)?),
+            transport::LOCAL_ALCHEMY_KEY,
+        )
+        .await
+    }
+    /// Inject only the explicitly selected, validated production credential.
+    pub async fn run_production(&self, input: &[u8], alchemy_key: &str) -> Result<RunOutput> {
+        let hooks = transport::Hooks::production(alchemy_key)?;
+        self.run_inner(input, None, "Production", Box::new(hooks), alchemy_key)
             .await
     }
     /// Explicit host-integration test seam. Never exposed by Production CLI configuration.
@@ -111,7 +123,8 @@ impl Runner {
         mode: &'static str,
         hooks: Box<dyn WasiHttpHooks>,
     ) -> Result<RunOutput> {
-        self.run_inner(input, local_now, mode, hooks).await
+        self.run_inner(input, local_now, mode, hooks, transport::LOCAL_ALCHEMY_KEY)
+            .await
     }
     async fn run_inner(
         &self,
@@ -119,12 +132,14 @@ impl Runner {
         local_now: Option<u64>,
         mode: &'static str,
         hooks: Box<dyn WasiHttpHooks>,
+        alchemy_key: &str,
     ) -> Result<RunOutput> {
         ensure!(input.len() <= 32769, "host stdin exceeds 32769 bytes");
         let stdout = MemoryOutputPipe::new(16384);
         let stderr = MemoryOutputPipe::new(16384);
         let mut ctx = WasiCtxBuilder::new();
-        ctx.stdin(MemoryInputPipe::new(input.to_vec()))
+        ctx.env("ALCHEMY_API_KEY", alchemy_key)
+            .stdin(MemoryInputPipe::new(input.to_vec()))
             .stdout(stdout.clone())
             .stderr(stderr.clone())
             .monotonic_clock(Monotonic(tokio::time::Instant::now()));

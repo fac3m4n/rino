@@ -12,10 +12,22 @@ pub const PROVIDERS: [Provider; 2] = [
         url: "https://ethereum-sepolia-rpc.publicnode.com",
     },
     Provider {
-        id: "automata",
-        url: "https://public.1rpc.io/sepolia",
+        id: "alchemy",
+        url: "https://eth-sepolia.g.alchemy.com",
     },
 ];
+/// A runtime credential is a single bounded ASCII path segment, never a URL.
+/// Invalid or missing credentials use a fixed error without secret diagnostics.
+pub fn alchemy_path(key: &str) -> Result<String, WorkerError> {
+    if !(8..=128).contains(&key.len())
+        || !key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err(WorkerError::Rpc);
+    }
+    Ok(format!("/v2/{key}"))
+}
 pub struct RpcResponse {
     pub status: u16,
     pub body: Box<dyn Read>,
@@ -152,8 +164,11 @@ mod wasi_http {
             // Authority/path come only from the compiled configuration, never a URL parser
             // over caller input. HTTPS uses the default port, without redirect handling.
             let (authority, path) = match index {
-                0 => ("ethereum-sepolia-rpc.publicnode.com", "/"),
-                1 => ("public.1rpc.io", "/sepolia"),
+                0 => ("ethereum-sepolia-rpc.publicnode.com", "/".to_owned()),
+                1 => (
+                    "eth-sepolia.g.alchemy.com",
+                    alchemy_path(&std::env::var("ALCHEMY_API_KEY").map_err(|_| WorkerError::Rpc)?)?,
+                ),
                 _ => return Err(WorkerError::Rpc),
             };
             let headers = Headers::new();
@@ -171,7 +186,7 @@ mod wasi_http {
                 .set_authority(Some(authority))
                 .map_err(|_| WorkerError::Http)?;
             request
-                .set_path_with_query(Some(path))
+                .set_path_with_query(Some(&path))
                 .map_err(|_| WorkerError::Http)?;
             let body = request.body().map_err(|_| WorkerError::Http)?;
             let stream = body.write().map_err(|_| WorkerError::Http)?;
@@ -251,6 +266,36 @@ mod wasi_http {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn alchemy_key_has_a_bounded_ascii_segment_and_fixed_route() {
+        assert_eq!(
+            alchemy_path("Valid_123-key"),
+            Ok("/v2/Valid_123-key".into())
+        );
+        for key in ["a".repeat(8), "Z".repeat(128)] {
+            assert_eq!(alchemy_path(&key), Ok(format!("/v2/{key}")));
+        }
+        for key in [
+            "",
+            "short",
+            "has/slash",
+            "query?key",
+            "fragment#key",
+            "space key",
+            "unicodé1",
+            "percent%41",
+            "a.b-cdef",
+            "https://attacker.invalid",
+            "line\nfeed",
+        ] {
+            assert_eq!(
+                alchemy_path(key),
+                Err(WorkerError::Rpc),
+                "invalid shape accepted"
+            );
+        }
+        assert_eq!(alchemy_path(&"a".repeat(129)), Err(WorkerError::Rpc));
+    }
     #[test]
     fn one_absolute_deadline_does_not_reset_between_connection_headers_and_chunks() {
         let d = Deadline::new(100).unwrap();

@@ -42,12 +42,18 @@ async fn run() -> Result<bool> {
     let mode = args
         .get("--mode")
         .context("--mode production|local-sandbox required")?;
+    let mut production_key = None;
     let gateway = match mode.as_str() {
         "production" => {
             ensure!(
                 !args.contains_key("--rpc-url") && !args.contains_key("--near-time"),
                 "Production forbids local RPC/clock overrides"
             );
+            let key = std::env::var("ALCHEMY_API_KEY").map_err(|_| {
+                anyhow::anyhow!(proofcredit_worker_host::transport::CREDENTIAL_ERROR)
+            })?;
+            proofcredit_worker_host::transport::alchemy_path(&key)?;
+            production_key = Some(key);
             None
         }
         "local-sandbox" => {
@@ -78,7 +84,11 @@ async fn run() -> Result<bool> {
     let adapter = gateway
         .as_ref()
         .map_or(Adapter::Production, |g| Adapter::LocalSandbox(g.adapter()));
-    let out = runner.run(&bytes, adapter).await;
+    let out = if let Some(key) = production_key {
+        runner.run_production(&bytes, &key).await
+    } else {
+        runner.run(&bytes, adapter).await
+    };
     if let Some(gateway) = gateway {
         gateway.shutdown().await;
     }

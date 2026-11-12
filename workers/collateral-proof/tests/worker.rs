@@ -71,7 +71,7 @@ impl RpcTransport for Fake {
             }
             m => panic!("unexpected method {m}"),
         };
-        if self.mode == "disagree" && p.id == "automata" && q["params"][0] == "0x7b" {
+        if self.mode == "disagree" && p.id == "alchemy" && q["params"][0] == "0x7b" {
             result["stateRoot"] = json!(hex(&[0x33; 32]));
         }
         if self.mode == "quantity" && q["method"] == "eth_chainId" {
@@ -111,12 +111,12 @@ fn exact_original_bytes_yield_proven_evidence_and_only_fixed_rpc_calls() {
     let calls = f.calls.borrow();
     assert_eq!(calls.len(), 6);
     for (n, chunk) in calls.chunks(3).enumerate() {
-        assert_eq!(chunk[0].0.id, ["publicnode", "automata"][n]);
+        assert_eq!(chunk[0].0.id, ["publicnode", "alchemy"][n]);
         assert_eq!(
             chunk[0].0.url,
             [
                 "https://ethereum-sepolia-rpc.publicnode.com",
-                "https://public.1rpc.io/sepolia"
+                "https://eth-sepolia.g.alchemy.com"
             ][n]
         );
         for c in chunk {
@@ -149,7 +149,15 @@ fn boundaries_and_endpoint_injection_reject_before_rpc() {
         Err(WorkerError::InputTooLarge)
     );
     assert!(f.calls.borrow().is_empty());
-    for field in ["url", "provider_id", "endpoint", "executor"] {
+    for field in [
+        "url",
+        "provider_id",
+        "endpoint",
+        "executor",
+        "ALCHEMY_API_KEY",
+        "secrets_ref",
+        "profile",
+    ] {
         let mut r = fixture();
         r[field] = json!("https://attacker.invalid");
         assert!(run_worker(&serde_json::to_vec(&r).unwrap(), &f, 10000).is_err());

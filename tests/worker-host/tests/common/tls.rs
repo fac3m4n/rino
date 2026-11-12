@@ -75,7 +75,7 @@ impl Fixture {
         } else {
             vec![
                 "ethereum-sepolia-rpc.publicnode.com".into(),
-                "public.1rpc.io".into(),
+                "eth-sepolia.g.alchemy.com".into(),
             ]
         };
         let rcgen::CertifiedKey { cert, signing_key } =

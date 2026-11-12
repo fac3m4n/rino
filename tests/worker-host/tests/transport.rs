@@ -44,6 +44,21 @@ async fn canonical_guest_accepts_valid_quorum_over_verified_tls() {
         "verified"
     );
     assert!(out.stderr.is_empty());
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("proofcredit-local-test-key"));
+    assert!(
+        fixture
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .skip(3)
+            .all(
+                |header| header.starts_with("POST /v2/proofcredit-local-test-key HTTP/1.1\r\n")
+                    && header
+                        .to_ascii_lowercase()
+                        .contains("host: eth-sepolia.g.alchemy.com\r\n")
+            )
+    );
     assert!(out.exit_success);
     assert_eq!(out.stdout.iter().filter(|b| **b == b'\n').count(), 1);
     assert_eq!(fixture.requests.lock().unwrap().len(), 6);
@@ -51,7 +66,7 @@ async fn canonical_guest_accepts_valid_quorum_over_verified_tls() {
         *trace.destinations.lock().unwrap(),
         [
             "https://ethereum-sepolia-rpc.publicnode.com/",
-            "https://public.1rpc.io/sepolia"
+            "https://eth-sepolia.g.alchemy.com/v2/[REDACTED]"
         ]
         .into_iter()
         .flat_map(|s| vec![s.to_string(); 3])

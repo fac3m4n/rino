@@ -62,7 +62,7 @@ impl RpcTransport for FixtureRpc {
         provider: Provider,
         bytes: &[u8],
     ) -> std::result::Result<RpcResponse, WorkerError> {
-        assert!(["publicnode", "automata"].contains(&provider.id));
+        assert!(["publicnode", "alchemy"].contains(&provider.id));
         let q: Value = serde_json::from_slice(bytes).unwrap();
         let b = &self.0;
         let result = match q["method"].as_str().unwrap() {

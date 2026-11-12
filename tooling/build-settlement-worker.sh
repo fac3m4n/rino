@@ -40,7 +40,8 @@ manifest={
  'cargo_command':['cargo','build','--manifest-path','.cache/proof-artifact-sources/settlement/Cargo.toml','--package','proofcredit-settlement-worker','--locked','--offline','--target','wasm32-wasip2','--release'],
  'reproduce':'./tooling/build-settlement-worker.sh',
  'wasi_bindings':'0.13.3+wasi-0.2.2',
- 'providers':[{'id':'publicnode','url':'https://ethereum-sepolia-rpc.publicnode.com'},{'id':'automata','url':'https://public.1rpc.io/sepolia'}],
+ 'providers':[{'id':'publicnode','url':'https://ethereum-sepolia-rpc.publicnode.com'},{'id':'alchemy','url':'https://eth-sepolia.g.alchemy.com'}],
+ 'runtime_credentials':{'environment_key':'ALCHEMY_API_KEY','path_template':'/v2/<key>','key_shape':'8-128 ASCII letters/digits/underscore/hyphen','secret_in_manifest':False},
  'execution_claim':'Compiled WASI component only; no OutLayer or hardware-attested execution claimed.'
 }
 output=root/'target/settlement-worker-manifest.json'

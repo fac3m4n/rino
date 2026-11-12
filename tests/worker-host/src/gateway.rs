@@ -53,7 +53,7 @@ impl Gateway {
         let rpc = upstream(rpc_url)?;
         let rcgen::CertifiedKey { cert, signing_key } = rcgen::generate_simple_self_signed(vec![
             "ethereum-sepolia-rpc.publicnode.com".into(),
-            "public.1rpc.io".into(),
+            "eth-sepolia.g.alchemy.com".into(),
         ])?;
         let config = ServerConfig::builder()
             .with_no_client_auth()
@@ -140,7 +140,10 @@ async fn forward_checked(
             && matches!(
                 (host, request.uri().path_and_query().map(|p| p.as_str())),
                 (Some("ethereum-sepolia-rpc.publicnode.com"), Some("/"))
-                    | (Some("public.1rpc.io"), Some("/sepolia"))
+                    | (
+                        Some("eth-sepolia.g.alchemy.com"),
+                        Some("/v2/proofcredit-local-test-key")
+                    )
             ),
         "gateway destination denied"
     );
