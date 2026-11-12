@@ -36,7 +36,7 @@ fn config() -> Config {
         executor: id("executor.testnet"),
         mpc: id("mpc.testnet"),
         wasm_url: "https://example.com/worker.wasm".into(),
-        wasm_sha256: "2b4e8582fe62cdedee47718a5cbe186406bcba96c1c0a51290fb57cc2e2d2efa".into(),
+        wasm_sha256: "be818d821f076d5e1dbf3650b03811b7658c85b14fd5c2fa7abce4ac87184c69".into(),
         operation_deposit: U128(DEPOSIT),
         network: NetworkMode::Sandbox {
             mpc: id("mpc.testnet"),
@@ -310,7 +310,7 @@ fn proof_call_pins_policy_source_resources_deposit_and_exact_input() {
     let args = &calls()[0].1;
     assert_eq!(
         args["source"],
-        json!({"WasmUrl":{"url":"https://example.com/worker.wasm","hash":"2b4e8582fe62cdedee47718a5cbe186406bcba96c1c0a51290fb57cc2e2d2efa","build_target":"wasm32-wasip2"}})
+        json!({"WasmUrl":{"url":"https://example.com/worker.wasm","hash":"be818d821f076d5e1dbf3650b03811b7658c85b14fd5c2fa7abce4ac87184c69","build_target":"wasm32-wasip2"}})
     );
     assert_eq!(
         args["resource_limits"],

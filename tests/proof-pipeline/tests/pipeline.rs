@@ -2,7 +2,7 @@
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use near_api::{Contract, NearGas, NearToken, NetworkConfig, Signer};
 use near_sandbox::{Sandbox, config::DEFAULT_GENESIS_ACCOUNT_PRIVATE_KEY};
-use proofcredit_proof_worker::{Provider, RpcResponse, RpcTransport, WorkerError, run_worker};
+use proofcredit_proof_worker::{Provider, RpcResponse, RpcTransport, WorkerError, run_entry};
 use rlp::RlpStream;
 use serde_json::{Value, json};
 use std::{io::Cursor, path::PathBuf, sync::Arc, time::Duration};
@@ -11,7 +11,7 @@ use tokio::task::JoinHandle;
 
 const VAULT: &str = "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf";
 const DEPOSIT: &str = "50000000000000000000000";
-const HASH: &str = "2b4e8582fe62cdedee47718a5cbe186406bcba96c1c0a51290fb57cc2e2d2efa";
+const HASH: &str = "be818d821f076d5e1dbf3650b03811b7658c85b14fd5c2fa7abce4ac87184c69";
 const URL: &str = "https://example.invalid/proof-worker.wasm";
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -231,16 +231,27 @@ impl Harness {
         .await??;
         Ok((tx, record))
     }
-    fn worker(&self, record: &Value) -> Value {
+    fn worker_bytes(&self, record: &Value) -> Vec<u8> {
         let input = record["args"]["input_data"].as_str().unwrap();
         let r: Value = serde_json::from_str(input).unwrap();
-        let output = run_worker(
+        let mut output = Vec::new();
+        let mut diagnostics = Vec::new();
+        run_entry(
             input.as_bytes(),
+            &mut output,
+            &mut diagnostics,
             &FixtureRpc(r["bundle"].clone()),
             r["requested_at"].as_str().unwrap().parse().unwrap(),
         )
         .unwrap();
-        serde_json::from_slice(&output).unwrap()
+        assert!(
+            diagnostics.is_empty(),
+            "native worker must accept the fixture"
+        );
+        output
+    }
+    fn worker(&self, record: &Value) -> String {
+        String::from_utf8(self.worker_bytes(record)).unwrap()
     }
     async fn resume(&self, record: &Value, output: String, fail: bool) -> Result<()> {
         let result = self
@@ -275,6 +286,16 @@ fn result_value(result: &Value) -> Value {
         .unwrap();
     serde_json::from_slice(&bytes).unwrap()
 }
+fn executor_return_bytes(result: &Value) -> Vec<Vec<u8>> {
+    result["receipts_outcome"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["outcome"]["executor_id"] == "executor")
+        .filter_map(|r| r["outcome"]["status"]["SuccessValue"].as_str())
+        .map(|value| B64.decode(value).unwrap())
+        .collect()
+}
 fn assert_proof_gas(result: &Value) {
     let controller: Vec<_> = result["receipts_outcome"]
         .as_array()
@@ -307,7 +328,8 @@ async fn valid_pipeline_records_exact_proven_account() -> Result<()> {
     let h = Harness::new("valid").await?;
     h.funded().await?;
     let (tx, r) = h.start(bundle(h.now().await?)).await?;
-    let output = h.worker(&r);
+    let raw_output = h.worker_bytes(&r);
+    let output: Value = serde_json::from_slice(&raw_output)?;
     assert_eq!(output["balance_wei"], "1000000000000000000");
     assert_eq!(output["nonce"], "0");
     assert_eq!(output["vault"], VAULT);
@@ -316,8 +338,13 @@ async fn valid_pipeline_records_exact_proven_account() -> Result<()> {
         output["code_hash"],
         "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"
     );
-    h.resume(&r, output.to_string(), false).await?;
+    h.resume(&r, h.worker(&r), false).await?;
     let receipts = finish(tx, true).await?;
+    assert_eq!(
+        executor_return_bytes(&receipts),
+        vec![raw_output],
+        "executor dependency must return the original native worker bytes"
+    );
     assert_eq!(h.view("controller", "get_evidence").await?, output);
     assert_eq!(h.view("controller", "get_status").await?, "ProofReady");
     assert!(receipts["receipts_outcome"].as_array().unwrap().len() >= 3);
@@ -349,7 +376,7 @@ async fn direct_callback_cannot_accept_evidence() -> Result<()> {
         }
     }
     h.no_evidence("ProofPending").await?;
-    h.resume(&r, h.worker(&r).to_string(), false).await?;
+    h.resume(&r, h.worker(&r), false).await?;
     finish(tx, true).await?;
     Ok(())
 }
@@ -397,7 +424,7 @@ async fn cancellation_is_terminal_despite_late_valid_result() -> Result<()> {
     let out = h.worker(&r);
     h.ok("controller", "cancel", json!({})).await?;
     assert_eq!(h.view("controller", "get_generation").await?, "3");
-    h.resume(&r, out.to_string(), false).await?;
+    h.resume(&r, out, false).await?;
     finish(tx, false).await?;
     h.no_evidence("Cancelled").await?;
     Ok(())
@@ -415,11 +442,12 @@ async fn wrong_context_and_oversized_result_reject() -> Result<()> {
         "exact",
     ] {
         let (tx, r) = h.start(bundle(h.now().await?)).await?;
-        let mut output = h.worker(&r);
+        let raw = h.worker(&r);
+        let mut output: Value = serde_json::from_str(&raw)?;
         let text = match mode {
             "large" | "exact" => {
                 let limit = if mode == "large" { 8193 } else { 8192 };
-                let mut s = output.to_string();
+                let mut s = raw;
                 s.push_str(&" ".repeat(limit - s.len()));
                 s
             }
@@ -434,8 +462,12 @@ async fn wrong_context_and_oversized_result_reject() -> Result<()> {
                 output.to_string()
             }
         };
-        h.resume(&r, text, false).await?;
-        finish(tx, mode == "exact").await?;
+        if mode == "large" || mode == "exact" {
+            assert_eq!(text.len(), if mode == "large" { 8193 } else { 8192 });
+        }
+        h.resume(&r, text.clone(), false).await?;
+        let receipts = finish(tx, mode == "exact").await?;
+        assert_eq!(executor_return_bytes(&receipts), vec![text.into_bytes()]);
         if mode != "exact" {
             h.no_evidence("Funding").await?;
         }
@@ -468,7 +500,7 @@ async fn pinned_source_resources_and_budget_match_outbound_receipt() -> Result<(
     assert_eq!(a["payer_account_id"], "controller");
     assert!(a["secrets_ref"].is_null() && a["params"].is_null());
     assert_eq!(r["prepaid_gas"], "200000000000000");
-    h.resume(&r, h.worker(&r).to_string(), false).await?;
+    h.resume(&r, h.worker(&r), false).await?;
     let result = finish(tx, true).await?;
     let outcomes = result["receipts_outcome"].as_array().unwrap();
     assert!(
@@ -571,12 +603,11 @@ async fn timeout_recovers_and_late_old_result_cannot_clobber_new_request() -> Re
     let (new_tx, new_r) = h.start(bundle(h.now().await?)).await?;
     assert_eq!(h.view("controller", "get_generation").await?, "4");
     let pending = h.view("controller", "get_pending").await?;
-    h.resume(&old_r, old_result.to_string(), false).await?;
+    h.resume(&old_r, old_result, false).await?;
     finish(old_tx, false).await?;
     h.no_evidence("ProofPending").await?;
     assert_eq!(h.view("controller", "get_pending").await?, pending);
-    h.resume(&new_r, h.worker(&new_r).to_string(), false)
-        .await?;
+    h.resume(&new_r, h.worker(&new_r), false).await?;
     finish(new_tx, true).await?;
     assert_eq!(h.view("controller", "get_status").await?, "ProofReady");
     Ok(())
@@ -594,7 +625,7 @@ async fn successful_deposit_failed_callback_recovers_after_real_expiry() -> Resu
     assert!(saved_controller.get_evidence().is_none());
     h.patch_state(b"deliberately-invalid-controller-state")
         .await?;
-    h.resume(&r, h.worker(&r).to_string(), false).await?;
+    h.resume(&r, h.worker(&r), false).await?;
     let failed = tx.await??;
     assert!(failed["status"].get("Failure").is_some());
     assert_proof_gas(&failed);

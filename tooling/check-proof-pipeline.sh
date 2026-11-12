@@ -12,14 +12,14 @@ mkdir -p "$TMPDIR" "$ROOT/.cache/proof-pipeline"
 # Dependencies and the pinned binary/toolchain must already be cached locally.
 # No installer, public account, global configuration or public RPC is used here.
 ./tooling/build-proof-worker.sh
-RUSTFLAGS='--cfg near' cargo build --manifest-path contracts/controller/Cargo.toml --target wasm32-unknown-unknown --release --locked --offline
-RUSTFLAGS='--cfg near' cargo build --manifest-path tests/proof-pipeline/contracts/services/Cargo.toml --target wasm32-unknown-unknown --release --locked --offline
+./tooling/build-proof-contracts.sh
 python3 - <<'PIN'
 from pathlib import Path
 import hashlib
 pins = {
- 'target/wasm32-unknown-unknown/release/proofcredit_controller.wasm': '3ac0e62e263a4e2c3f41e3c83f2cef00908d5121dc51ec12779fdf0b17c405a5',
- 'target/wasm32-wasip2/release/proofcredit-proof-worker.wasm': '2b4e8582fe62cdedee47718a5cbe186406bcba96c1c0a51290fb57cc2e2d2efa',
+ 'target/wasm32-unknown-unknown/release/proofcredit_controller.wasm': '0f4b582d1c1240fbbfe5617daf2431501b9c1b1bd089612f512b786b5ea7b2b4',
+ 'target/wasm32-wasip2/release/proofcredit-proof-worker.wasm': 'be818d821f076d5e1dbf3650b03811b7658c85b14fd5c2fa7abce4ac87184c69',
+ 'target/wasm32-unknown-unknown/release/proofcredit_pipeline_services.wasm': 'f9cdcc14eb15f7f77849f8be95e0e058bca0cd986a6831f94747e2c5157a7c2a',
  '.tools/near-sandbox/2.14.0/near-sandbox': '8e0e1521372b0fce801b7464078c1e95e5a25a0f92ad4b4241451c33fe9e5a2a',
 }
 for name, expected in pins.items():
