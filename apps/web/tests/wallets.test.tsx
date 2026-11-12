@@ -83,13 +83,17 @@ it("a confirmed reverted payment is definitive", async () => {
   ).rejects.toMatchObject({ uncertainMutation: false, outcome: "failed" });
 });
 
-const nearFixture = vi.hoisted(() => ({ calls: 0, results: [] as unknown[] }));
+const nearFixture = vi.hoisted(() => ({
+  account: "borrower.test",
+  calls: 0,
+  results: [] as unknown[],
+}));
 vi.mock("@hot-labs/near-connect", () => ({
   NearConnector: class {
     on() {}
     async wallet() {
       return {
-        getAccounts: async () => [{ accountId: "borrower.test" }],
+        getAccounts: async () => [{ accountId: nearFixture.account }],
         signAndSendTransaction: async () => {
           const result = nearFixture.results[nearFixture.calls++];
           if (result instanceof Error) throw result;
@@ -111,6 +115,18 @@ const nearAction = {
   gas: "100000000000000",
   deposit: "1",
 };
+it("freshly checks the exact signer before any NEAR wallet submission", async () => {
+  nearFixture.calls = 0;
+  nearFixture.account = "lender.test";
+  try {
+    await expect(
+      wallet().sendNear(nearConfig, [nearAction], "borrower.test"),
+    ).rejects.toThrow("Connect borrower.test before signing.");
+    expect(nearFixture.calls).toBe(0);
+  } finally {
+    nearFixture.account = "borrower.test";
+  }
+});
 it("prevalidates every NEAR action before any wallet submission", async () => {
   nearFixture.calls = 0;
   nearFixture.results = [

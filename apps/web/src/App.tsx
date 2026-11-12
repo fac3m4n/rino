@@ -412,7 +412,9 @@ export default function App() {
       }
     }
   };
-  const connect = async (chain: "near" | "ethereum" | "switch") => {
+  const connect = async (
+    chain: "near" | "disconnect-near" | "ethereum" | "switch",
+  ) => {
     if (!config || inflight.current) return;
     inflight.current = true;
     poller.current?.changed();
@@ -420,6 +422,7 @@ export default function App() {
     setError("");
     try {
       if (chain === "near") await wallets.connectNear(config);
+      else if (chain === "disconnect-near") await wallets.disconnectNear();
       else if (chain === "switch") await wallets.switchEvm();
       else await wallets.connectEvm();
     } catch (e) {
@@ -1028,12 +1031,22 @@ export default function App() {
                       className="button secondary"
                       disabled={!!pending}
                       onClick={() => void connect("near")}
+                      title={wallets.nearAccount || undefined}
                     >
                       <NearMark />
-                      {wallets.nearAccount
-                        ? short(wallets.nearAccount)
-                        : "Connect NEAR testnet"}
+                      <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+                        {wallets.nearAccount || "Connect NEAR testnet"}
+                      </span>
                     </button>
+                    {wallets.nearAccount && (
+                      <button
+                        className="button secondary"
+                        disabled={!!pending}
+                        onClick={() => void connect("disconnect-near")}
+                      >
+                        Disconnect NEAR
+                      </button>
+                    )}
                     <button
                       className="button secondary"
                       disabled={!!pending}

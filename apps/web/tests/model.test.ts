@@ -38,6 +38,28 @@ describe("transaction readiness", () => {
         evmChainId: 11155111,
       }),
     ).toContain("borrower.test"));
+  it("identifies the connected account and required borrower when proof is blocked", () => {
+    const reason = actionGuard(
+      "prove",
+      { ...config, mode: "public" },
+      state,
+      "borrower",
+      { nearAccount: "lender.test" },
+    );
+    expect(reason).toContain("lender.test");
+    expect(reason).toContain("borrower.test");
+    expect(reason).toMatch(/disconnect.*reconnect/i);
+  });
+  it("guides an absent NEAR account to connect without claiming a mismatch", () => {
+    const reason = actionGuard(
+      "prove",
+      { ...config, mode: "public" },
+      state,
+      "borrower",
+    );
+    expect(reason).toContain("Connect borrower.test on NEAR testnet");
+    expect(reason).not.toContain("Connected");
+  });
   it("blocks Ethereum funding on the wrong wallet network", () =>
     expect(
       actionGuard(

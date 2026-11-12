@@ -47,8 +47,13 @@ export function actionGuard(
       (action !== "fund" || role === "lender") &&
       wallet?.nearAccount !==
         (role === "borrower" ? config.near.borrowerId : config.near.lenderId)
-    )
-      return `Connect ${role === "borrower" ? config.near.borrowerId : config.near.lenderId} on NEAR testnet.`;
+    ) {
+      const expected =
+        role === "borrower" ? config.near.borrowerId : config.near.lenderId;
+      return wallet?.nearAccount
+        ? `Connected to ${wallet.nearAccount}. Disconnect NEAR, then reconnect as ${expected} on NEAR testnet.`
+        : `Connect ${expected} on NEAR testnet.`;
+    }
     if (
       ["advance-maturity", "challenge-forgery", "challenge-duplicate"].includes(
         action,

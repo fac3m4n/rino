@@ -65,10 +65,12 @@ export function useWallets() {
     evmAccount,
     evmChainId,
     async connectNear(config: Config) {
-      const wallet = await (await nearConnector(config)).connect();
-      setNear(
-        (await wallet.getAccounts({ network: "testnet" }))[0]?.accountId ?? "",
-      );
+      // The connector emits the validated signIn accounts before resolving.
+      await (await nearConnector(config)).connect();
+    },
+    async disconnectNear() {
+      await connector.current?.disconnect();
+      setNear("");
     },
     async connectEvm() {
       const client = createWalletClient({
