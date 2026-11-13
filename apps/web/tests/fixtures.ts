@@ -1,5 +1,9 @@
 /** UI-only fixtures. These are not chain receipts or proof evidence. */
-import type { Config, State } from "@proofcredit/coordinator/api";
+import type {
+  Config,
+  State,
+  OperationView,
+} from "@proofcredit/coordinator/api";
 export const configFixture: Config = {
   apiVersion: 1,
   mode: "local",
@@ -99,4 +103,30 @@ export const settlementFixture: NonNullable<State["settlement"]> = {
   pending: null,
   pending_reason: "",
   retired: false,
+};
+
+export const operationFixture: OperationView = {
+  id: "11111111-1111-4111-8111-111111111111",
+  controllerId: configFixture.near.controllerId,
+  action: "prove",
+  role: "borrower",
+  historical: false,
+  createdAt: "1",
+  updatedAt: "1",
+  stage: "needs-check",
+  unresolved: true,
+  continued: false,
+  detail: "Wallet needs checking.",
+  steps: [
+    {
+      index: 0,
+      chain: "near",
+      method: "request_proof",
+      signerId: configFixture.near.borrowerId,
+      receiverId: configFixture.near.controllerId,
+      started: true,
+      status: "needs-check",
+      hashes: [],
+    },
+  ],
 };

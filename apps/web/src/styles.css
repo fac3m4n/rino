@@ -797,6 +797,25 @@ footer {
 .trust-panel p {
   margin-top: 8px;
 }
+.trust-panel .receipt-facts {
+  flex-direction: column;
+  min-width: 0;
+}
+.trust-panel form,
+.trust-panel label {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.trust-panel input,
+.trust-panel select {
+  width: 100%;
+  min-width: 0;
+  padding: 8px;
+  color: #36432c;
+  border: 1px solid #dfe6d4;
+  border-radius: 4px;
+}
 .pending-box {
   display: flex;
   gap: 8px;

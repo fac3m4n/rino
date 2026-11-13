@@ -1,4 +1,4 @@
-import type { State } from "@proofcredit/coordinator/api";
+import type { State, OperationView } from "@proofcredit/coordinator/api";
 /** Automatic reads only. Action authority lives in SnapshotLane and the App. */
 export class ReadPoller {
   private timer?: ReturnType<typeof setTimeout>;
@@ -7,6 +7,25 @@ export class ReadPoller {
   private disposed = false;
   private failures = 0;
   private retryAt = 0;
+  private checks = new Map<string, { began: number; last: number }>();
+  private activeOperations(): OperationView[] {
+    const now = Date.now();
+    return (
+      this.options
+        .operations?.()
+        .filter(
+          (op) =>
+            !op.historical &&
+            op.unresolved &&
+            op.steps.some(
+              (step) =>
+                step.hashes.length > 0 &&
+                !["succeeded", "failed"].includes(step.status),
+            ) &&
+            now - (this.checks.get(op.id)?.began ?? now) < 600000,
+        ) ?? []
+    );
+  }
   constructor(
     private options: {
       read: () => Promise<boolean | undefined>;
@@ -14,6 +33,8 @@ export class ReadPoller {
       pending: () => boolean;
       available: () => boolean;
       subscribe: (wake: () => void) => () => void;
+      operations?: () => OperationView[];
+      reconcile?: (operation: OperationView) => Promise<boolean>;
     },
   ) {}
   start(): void {
@@ -37,7 +58,7 @@ export class ReadPoller {
     if (this.failures) return Math.max(0, this.retryAt - Date.now());
     return this.options.mode() === "local"
       ? 2500
-      : this.options.pending()
+      : this.options.pending() || this.activeOperations().length > 0
         ? 5000
         : 30000;
   }
@@ -57,7 +78,29 @@ export class ReadPoller {
     this.active = true;
     try {
       const ready = await this.options.read();
-      if (ready !== undefined) this.delivered(ready);
+      let checked = true;
+      if (
+        !this.disposed &&
+        this.options.mode() === "public" &&
+        this.options.available() &&
+        ready !== false &&
+        this.options.reconcile
+      ) {
+        const now = Date.now();
+        const op = this.activeOperations().find((op) => {
+          const budget = this.checks.get(op.id);
+          return !budget || now - budget.last >= 5000;
+        });
+        if (op) {
+          this.checks.set(op.id, {
+            began: this.checks.get(op.id)?.began ?? now,
+            last: now,
+          });
+          checked = await this.options.reconcile(op);
+        }
+      }
+      if (ready !== undefined || !checked)
+        this.delivered(ready !== false && checked);
     } catch {
       this.delivered(false);
     } finally {

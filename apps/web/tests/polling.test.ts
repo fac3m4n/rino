@@ -245,3 +245,109 @@ it("polls an asynchronous vault derivation as outstanding work", async () => {
     pollingPending({ ...stateFixture, proofStatus: "Deriving" }, false, false),
   ).toBe(true);
 });
+it("checks at most one known-hash operation per cycle, enforces five seconds, and stops after ten minutes", async () => {
+  vi.useFakeTimers();
+  const { operationFixture } = await import("./fixtures");
+  let operations = [operationFixture];
+  let checks = 0;
+  let wake = () => {};
+  const poller = new ReadPoller({
+    read: async () => true,
+    mode: () => "public",
+    pending: () => true,
+    available: () => true,
+    subscribe: (fn) => {
+      wake = fn;
+      return () => {};
+    },
+    operations: () => operations,
+    reconcile: async () => {
+      checks++;
+      return true;
+    },
+  });
+  poller.start();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(checks).toBe(0);
+  operations = [
+    {
+      ...operationFixture,
+      steps: [
+        {
+          ...operationFixture.steps[0],
+          hashes: [
+            {
+              hash: "11111111111111111111111111111111",
+              status: "pending",
+              detail: "Pending",
+            },
+          ],
+        },
+      ],
+    },
+  ];
+  wake();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(checks).toBe(1);
+  wake();
+  wake();
+  await vi.advanceTimersByTimeAsync(4999);
+  expect(checks).toBe(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(checks).toBe(2);
+  await vi.advanceTimersByTimeAsync(600000);
+  const exhausted = checks;
+  wake();
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(checks).toBe(exhausted);
+  poller.dispose();
+});
+it("keeps no-hash uncertainty and terminal history at idle cadence without receipt queries", async () => {
+  vi.useFakeTimers();
+  const { operationFixture } = await import("./fixtures");
+  let reads = 0,
+    checks = 0;
+  const poller = new ReadPoller({
+    read: async () => {
+      reads++;
+      return true;
+    },
+    mode: () => "public",
+    pending: () => false,
+    available: () => true,
+    subscribe: () => () => {},
+    operations: () => [
+      operationFixture,
+      {
+        ...operationFixture,
+        id: "22222222-2222-4222-8222-222222222222",
+        stage: "failed",
+        unresolved: false,
+        steps: [
+          {
+            ...operationFixture.steps[0],
+            status: "failed",
+            hashes: [
+              {
+                hash: "11111111111111111111111111111111",
+                status: "failed",
+                detail: "Final false",
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    reconcile: async () => {
+      checks++;
+      return true;
+    },
+  });
+  poller.start();
+  await vi.advanceTimersByTimeAsync(29999);
+  expect(reads).toBe(1);
+  expect(checks).toBe(0);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(reads).toBe(2);
+  poller.dispose();
+});

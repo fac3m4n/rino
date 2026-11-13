@@ -21,6 +21,7 @@ import type {
   Receipt,
   Role,
   State,
+  OperationView,
 } from "@proofcredit/coordinator/api";
 import type { Address } from "viem";
 import {
@@ -46,6 +47,12 @@ import {
 import { useWallets } from "./wallets";
 import { ReadPoller, pollingPending } from "./polling";
 import { ActionFailure } from "./outcomes";
+import {
+  OperationClient,
+  mergeOperations,
+  operationPaused,
+} from "./operation-client";
+import { OperationPanel } from "./OperationPanel";
 import {
   collateralShortfall,
   collateralSufficient,
@@ -104,6 +111,9 @@ export default function App() {
   const [config, setConfig] = useState<Config>();
   const [state, setState] = useState<State>();
   const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [operations, setOperations] = useState<OperationView[]>([]);
+  const operationsRef = useRef<OperationView[]>([]);
+  const operationClient = useRef<OperationClient | null>(null);
   const [role, setRole] = useState<Role>("borrower");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -156,6 +166,10 @@ export default function App() {
   const [uncertain, setUncertain] = useState(false);
   const [continued, setContinued] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const applyOperation = (op: OperationView) => {
+    operationsRef.current = mergeOperations(operationsRef.current, [op]);
+    setOperations(operationsRef.current);
+  };
   const pauseNetwork = (reason: string) => {
     if (unknownAction.current) unknownAction.current.checked = undefined;
     networkPausedRef.current = true;
@@ -176,10 +190,34 @@ export default function App() {
       (signal, options) => snapshot({ ...options, signal }),
       (data) => {
         latest.current = data;
-        poller.current?.delivered(data.config.ready && data.state.ready);
         setConfig(data.config);
         setState(data.state);
         setReceipts(data.receipts);
+        if (data.operations) {
+          operationsRef.current = mergeOperations(
+            operationsRef.current,
+            data.operations,
+          );
+          setOperations(operationsRef.current);
+          if (!operationClient.current) {
+            let storage: Storage | undefined;
+            try {
+              storage = window.localStorage;
+            } catch {
+              /* Server recovery still works. */
+            }
+            operationClient.current = new OperationClient(
+              data.config,
+              (op) => {
+                if (active) applyOperation(op);
+              },
+              storage,
+            );
+            void operationClient.current
+              .recoverHints(data.operations)
+              .catch(() => {});
+          } else operationClient.current.updateConfig(data.config);
+        }
         // Only this current-generation post-uncertainty delivery may authorize continuation.
         if (unknownAction.current) unknownAction.current.checked = data;
         if (
@@ -210,15 +248,32 @@ export default function App() {
         if (inflight.current) return;
         try {
           await lane.refresh();
+          return (
+            latest.current?.config.ready === true && latest.current.state.ready
+          );
         } catch (error) {
           if (active) {
-            automatic.delivered(false);
             pauseNetwork(
               error instanceof Error
                 ? error.message
                 : "Unable to refresh chain state.",
             );
           }
+          return false;
+        }
+      },
+      operations: () => operationsRef.current,
+      reconcile: async (op) => {
+        if (inflight.current || !operationClient.current) return true;
+        try {
+          const checked = await operationClient.current.check(op);
+          return !checked.steps.some((step) =>
+            step.hashes.some(
+              (hash) => hash.detail === "Provider unavailable; check again.",
+            ),
+          );
+        } catch {
+          return false;
         }
       },
       mode: () => latest.current?.config.mode ?? "public",
@@ -248,6 +303,8 @@ export default function App() {
       automatic.dispose();
       if (poller.current === automatic) poller.current = null;
       lane.dispose();
+      operationClient.current?.dispose();
+      operationClient.current = null;
       if (snapshots.current === lane) snapshots.current = null;
     };
   }, []);
@@ -269,19 +326,25 @@ export default function App() {
   const guard = (action: ActionName) =>
     !config || !state
       ? "Connecting to the coordinator."
-      : pending
+      : pending || refreshing
         ? "Wait for the pending transaction receipt."
-        : uncertain && !continued
-          ? "Outcome uncertain. Reconcile chain state and receipts before another financial action."
-          : networkPaused
-            ? "Latest chain state is unavailable. Refresh it before another financial action."
-            : actionGuard(action, config, state, role, wallets);
+        : config.capabilities?.operations &&
+            (operations === undefined || operationPaused(operations))
+          ? "An operation needs checking. Check its evidence or deliberately continue before another financial action."
+          : uncertain && !continued
+            ? "Outcome uncertain. Reconcile chain state and receipts before another financial action."
+            : networkPaused
+              ? "Latest chain state is unavailable. Refresh it before another financial action."
+              : actionGuard(action, config, state, role, wallets);
   const reconcile = async () => {
     const lane = snapshots.current;
     if (!lane || pending) return;
     setRefreshing(true);
     try {
       await lane.refresh({ fresh: true });
+      poller.current?.delivered(
+        latest.current?.config.ready === true && latest.current.state.ready,
+      );
     } catch (error) {
       poller.current?.delivered(false);
       if (snapshots.current === lane)
@@ -308,6 +371,24 @@ export default function App() {
     setError("");
     setMessage("");
   };
+  const operationTask = async (task: () => Promise<void>) => {
+    if (inflight.current) return;
+    inflight.current = true;
+    setRefreshing(true);
+    poller.current?.changed();
+    try {
+      await task();
+    } catch (error) {
+      pauseNetwork(
+        "Operation recovery is unavailable. Refresh current evidence before another financial action.",
+      );
+      throw error;
+    } finally {
+      inflight.current = false;
+      setRefreshing(false);
+      poller.current?.changed();
+    }
+  };
   const run = async (action: ActionName) => {
     const lane = snapshots.current;
     if (!config || !state || !lane || inflight.current) return;
@@ -317,6 +398,7 @@ export default function App() {
       return;
     }
     let before = latest.current ?? { config, state, receipts };
+    let tracked = false;
     const token = lane.invalidate();
     inflight.current = true;
     poller.current?.changed();
@@ -334,6 +416,72 @@ export default function App() {
       const blocked = actionGuard(action, config, state, role, wallets);
       if (blocked) throw Error(blocked);
       if (
+        config.mode === "public" &&
+        config.capabilities?.operations === true
+      ) {
+        if (
+          !current.operations ||
+          !operationClient.current ||
+          operationPaused(operationsRef.current)
+        )
+          throw Error(
+            "Operation recovery must complete before another financial action.",
+          );
+        tracked = true;
+        const client = operationClient.current;
+        const result = await client.create(
+          action,
+          role,
+          action === "fund" && role === "borrower"
+            ? (wallets.evmAccount ?? undefined)
+            : undefined,
+        );
+        if (!lane.isCurrent(token)) return;
+        if (result.funding) {
+          const funding = result.funding;
+          if (
+            !market?.vault ||
+            action !== "fund" ||
+            role !== "borrower" ||
+            funding.chainId !== "11155111" ||
+            funding.from.toLowerCase() !== wallets.evmAccount?.toLowerCase() ||
+            funding.to.toLowerCase() !== market.vault.toLowerCase() ||
+            funding.data !== "0x" ||
+            funding.valueWei !==
+              collateralShortfall(
+                market.terms,
+                state.ethereum?.vaultBalanceWei,
+              ).toString()
+          )
+            throw Error(
+              "Prepared funding intent does not match the current wallet and collateral requirement.",
+            );
+          await client.wallet(result.operation, (progress) =>
+            wallets.fundEvm(
+              config,
+              funding.to as Address,
+              BigInt(funding.valueWei),
+              progress,
+              funding.from as Address,
+            ),
+          );
+        } else if (result.walletActions?.length) {
+          await client.wallet(result.operation, (progress) =>
+            wallets.sendNear(
+              config,
+              result.walletActions!,
+              role === "borrower"
+                ? config.near.borrowerId
+                : config.near.lenderId,
+              progress,
+            ),
+          );
+        }
+        if (lane.isCurrent(token))
+          setMessage(
+            "Operation recorded. Wallet observations are hints until its exact transaction is independently verified. Current loan state is shown separately.",
+          );
+      } else if (
         config.mode === "public" &&
         action === "fund" &&
         role === "borrower"
@@ -369,7 +517,11 @@ export default function App() {
       }
     } catch (error) {
       if (lane.isCurrent(token)) {
-        if (error instanceof ActionFailure && error.uncertainMutation) {
+        if (
+          !tracked &&
+          error instanceof ActionFailure &&
+          error.uncertainMutation
+        ) {
           unknownAction.current = {
             action,
             before,
@@ -709,6 +861,63 @@ export default function App() {
             <div className="notice" role="status">
               {message}
             </div>
+          )}
+          {config?.mode === "public" && config.capabilities?.operations && (
+            <OperationPanel
+              operations={operations}
+              disabled={!!pending || refreshing}
+              onCheck={(op) =>
+                operationTask(async () => {
+                  if (!operationClient.current) return;
+                  await operationClient.current.check(op);
+                  await reconcile();
+                })
+              }
+              onHash={(op, step, hash) =>
+                operationTask(async () => {
+                  if (!operationClient.current) return;
+                  await operationClient.current.observe(op, {
+                    step,
+                    event: "hash",
+                    hash,
+                  });
+                  await operationClient.current.check(op);
+                  await reconcile();
+                })
+              }
+              onContinue={(op) =>
+                operationTask(async () => {
+                  if (!operationClient.current) return;
+                  await operationClient.current.check(op);
+                  const lane = snapshots.current;
+                  if (
+                    !lane ||
+                    !(await lane.refresh({ fresh: true })) ||
+                    !latest.current?.config.ready ||
+                    !latest.current.state.ready ||
+                    latest.current.state.busy
+                  )
+                    throw Error(
+                      "Fresh ready idle state is required before continuing.",
+                    );
+                  await operationClient.current.continue(op);
+                  if (!(await lane.refresh({ fresh: true })))
+                    throw Error("Unable to refresh state after continuation.");
+                })
+              }
+              onImport={(action, importRole, hash) =>
+                operationTask(async () => {
+                  if (!operationClient.current) return;
+                  await operationClient.current.import(
+                    action,
+                    importRole,
+                    hash,
+                  );
+                  await reconcile();
+                })
+              }
+              onError={setError}
+            />
           )}
           <div className="dashboard-grid">
             <div className="overview">

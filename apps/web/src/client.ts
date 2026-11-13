@@ -5,7 +5,9 @@ import type {
   Receipt,
   Role,
   State,
+  OperationView,
 } from "@proofcredit/coordinator/api";
+import { parseOperations } from "./operation-client";
 export const GET_TIMEOUT_MS = 15000;
 export const ACTION_TIMEOUT_MS = 180000;
 export interface RequestOptions {
@@ -15,7 +17,11 @@ export interface RequestOptions {
 }
 import { ActionFailure } from "./outcomes";
 export class RequestFailure extends ActionFailure {
-  constructor(message: string, uncertainMutation = false) {
+  constructor(
+    message: string,
+    uncertainMutation = false,
+    readonly responseCode?: string,
+  ) {
     super(
       message,
       uncertainMutation ? "unknown" : "failed",
@@ -61,6 +67,8 @@ async function requestJson<T>(
     if (!response.ok)
       throw new RequestFailure(
         data.message ?? "The coordinator rejected this request.",
+        false,
+        data.error === "ACTION_REJECTED" ? "ACTION_REJECTED" : undefined,
       );
     return data as T;
   })();
@@ -111,10 +119,30 @@ export function submitAction(
     options,
   );
 }
+export function postApi<T>(
+  config: Config,
+  path: string,
+  body: unknown,
+  options: RequestOptions = {},
+): Promise<T> {
+  return requestJson<T>(
+    path,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-ProofCredit-CSRF": config.csrfToken,
+      },
+      body: JSON.stringify(body),
+    },
+    options,
+  );
+}
 export interface Snapshot {
   config: Config;
   state: State;
   receipts: Receipt[];
+  operations?: OperationView[];
 }
 export async function snapshot(
   options: RequestOptions = {},
@@ -130,7 +158,14 @@ export async function snapshot(
       readApi<State>("state", requestOptions),
       readApi<Receipt[]>("receipts", requestOptions),
     ]);
-    return { config, state, receipts };
+    const operations =
+      config.mode === "public" && config.capabilities?.operations === true
+        ? parseOperations(
+            await readApi<unknown>("operations", requestOptions),
+            config.near.controllerId,
+          )
+        : undefined;
+    return { config, state, receipts, ...(operations ? { operations } : {}) };
   } finally {
     controller.abort();
     options.signal?.removeEventListener("abort", cancel);

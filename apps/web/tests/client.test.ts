@@ -102,3 +102,51 @@ it("requests fresh config/state only for explicit reconciliation or action bound
     "/api/receipts",
   ]);
 });
+it("recovers public operation records before delivering an action-authorizing snapshot", async () => {
+  const paths: string[] = [];
+  vi.stubGlobal("fetch", async (url: unknown) => {
+    paths.push(String(url));
+    return new Response(
+      JSON.stringify(
+        String(url).endsWith("config")
+          ? {
+              ...configFixture,
+              mode: "public",
+              capabilities: { operations: true },
+            }
+          : String(url).endsWith("operations") ||
+              String(url).endsWith("receipts")
+            ? []
+            : {},
+      ),
+    );
+  });
+  const { snapshot } = await import("../src/client");
+  const recovered = await snapshot();
+  expect(paths).toContain("/api/operations");
+  expect(recovered).toHaveProperty("operations", []);
+});
+for (const bad of [{ unknown: [] }, [null], [{ id: "wrong" }]])
+  it(`refuses malformed operation recovery instead of authorizing public actions (${JSON.stringify(bad)})`, async () => {
+    vi.stubGlobal(
+      "fetch",
+      async (url: unknown) =>
+        new Response(
+          JSON.stringify(
+            String(url).endsWith("config")
+              ? {
+                  ...configFixture,
+                  mode: "public",
+                  capabilities: { operations: true },
+                }
+              : String(url).endsWith("operations")
+                ? bad
+                : String(url).endsWith("receipts")
+                  ? []
+                  : {},
+          ),
+        ),
+    );
+    const { snapshot } = await import("../src/client");
+    await expect(snapshot()).rejects.toThrow();
+  });
