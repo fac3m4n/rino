@@ -440,3 +440,19 @@ it("keeps local offer routing unchanged by the public fee endowment repair", () 
   };
   expect(offeredAction(s, "lender", "local")).toBe("borrow");
 });
+
+it("public borrower funding requires an exposed Ethereum account even on Sepolia", () => {
+  expect(
+    actionGuard(
+      "fund",
+      { ...config, mode: "public" },
+      {
+        ...state,
+        market: { ...state.market!, phase: "Offered" },
+        ethereum: { ...state.ethereum!, vaultBalanceWei: "1" },
+      },
+      "borrower",
+      { evmChainId: 11155111 },
+    ),
+  ).toContain("Connect an Ethereum wallet");
+});

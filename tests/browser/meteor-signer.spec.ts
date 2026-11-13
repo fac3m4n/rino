@@ -113,8 +113,9 @@ async function installMeteor(
             if (config.network !== 'testnet') throw new Error('Expected testnet');
           }
           on(event, listener) { this.listeners[event] = listener; }
+          off(event) { delete this.listeners[event]; }
           async connect() {
-            this.listeners['wallet:signIn']?.({ accounts: [{ accountId: borrower, publicKey: 'fixture-only' }], success: true, source: 'signIn' });
+            this.listeners['wallet:signIn']?.({ wallet: await this.wallet(), accounts: [{ accountId: borrower, publicKey: 'fixture-only' }], success: true, source: 'signIn' });
             globalThis.meteorSignerFixture.connects++;
             return this.wallet();
           }
@@ -167,10 +168,9 @@ test("@meteor-signer a second imported borrower reaches one signing request afte
 }) => {
   await installMeteor(page, { selected: [borrower] });
   await proof(page).click();
-  await expect(page.getByRole("status")).toContainText(
-    "Wallet submission returned",
-    { timeout: 3000 },
-  );
+  await expect(
+    page.getByRole("status").filter({ hasText: "Wallet submission returned" }),
+  ).toContainText("Wallet submission returned", { timeout: 3000 });
   const observed = await observation(page);
   expect(observed.posts).toEqual([{ action: "prove", role: "borrower" }]);
   expect(observed.reads).toEqual([{ network: "testnet" }]);

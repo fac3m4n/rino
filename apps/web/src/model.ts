@@ -29,7 +29,7 @@ export function actionGuard(
   config: Config,
   state: State,
   role: Role,
-  wallet?: { nearAccount?: string; evmChainId?: number },
+  wallet?: { nearAccount?: string; evmAccount?: string; evmChainId?: number },
 ): string | null {
   if (!config.ready || !state.ready)
     return "The environment is not ready. Review readiness details.";
@@ -40,7 +40,7 @@ export function actionGuard(
     if (
       action === "fund" &&
       role === "borrower" &&
-      wallet?.evmChainId !== 11155111
+      (!wallet?.evmAccount || wallet.evmChainId !== 11155111)
     )
       return "Connect an Ethereum wallet on Sepolia.";
     if (

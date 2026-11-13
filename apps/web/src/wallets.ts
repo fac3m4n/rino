@@ -1,91 +1,74 @@
 import { useEffect, useRef, useState } from "react";
-import type { NearConnector } from "@hot-labs/near-connect";
 import {
   createPublicClient,
   createWalletClient,
   custom,
   http,
   type Address,
-  type EIP1193Provider,
 } from "viem";
 import { sepolia } from "viem/chains";
 import type { Config, WalletAction } from "@proofcredit/coordinator/api";
 import { ActionFailure, submissionFailure, userRejected } from "./outcomes";
 
-type Injected = EIP1193Provider & {
-  on?: (name: string, listener: (data: unknown) => void) => void;
-  removeListener?: (name: string, listener: (data: unknown) => void) => void;
-};
+import { WalletSession, type Injected } from "./wallet-session";
+
 function injected(): Injected {
   const provider = (window as unknown as { ethereum?: Injected }).ethereum;
   if (!provider)
     throw new Error("Install an Ethereum wallet to connect to Sepolia.");
   return provider;
 }
-export function useWallets() {
-  const connector = useRef<NearConnector | null>(null);
-  const [nearAccount, setNear] = useState("");
-  const [evmAccount, setEvm] = useState<Address>();
-  const [evmChainId, setChain] = useState<number>();
-  useEffect(() => {
-    const provider = (window as unknown as { ethereum?: Injected }).ethereum;
-    if (!provider) return;
-    const chain = (id: unknown) =>
-      setChain(typeof id === "string" ? Number(BigInt(id)) : undefined);
-    const accounts = (list: unknown) =>
-      setEvm(Array.isArray(list) ? (list[0] as Address) : undefined);
-    provider.on?.("chainChanged", chain);
-    provider.on?.("accountsChanged", accounts);
-    return () => {
-      provider.removeListener?.("chainChanged", chain);
-      provider.removeListener?.("accountsChanged", accounts);
-    };
-  }, []);
-  async function nearConnector(config: Config) {
-    if (config.mode !== "public" || config.near.networkId !== "testnet")
-      throw new Error(
-        "External wallets are available in public testnet mode only.",
-      );
-    if (!connector.current) {
+export function useWallets(config?: Config) {
+  const [state, setState] = useState<{
+    nearAccount: string;
+    evmAccount?: Address;
+    evmChainId?: number;
+  }>({ nearAccount: "" });
+  const sessionRef = useRef<WalletSession | null>(null);
+  if (!sessionRef.current)
+    sessionRef.current = new WalletSession(async (config) => {
       const { NearConnector } = await import("@hot-labs/near-connect");
-      connector.current = new NearConnector({
+      return new NearConnector({
         network: "testnet",
+        autoConnect: false,
         providers: { testnet: [config.near.rpcUrl] },
         features: { testnet: true, signAndSendTransaction: true },
       });
-      connector.current.on("wallet:signIn", ({ accounts }) =>
-        setNear(accounts[0]?.accountId ?? ""),
-      );
-      connector.current.on("wallet:signOut", () => setNear(""));
-    }
-    return connector.current;
-  }
+    });
+  const session = sessionRef.current;
+  useEffect(
+    () => session.start(config, setState),
+    [session, config?.mode, config?.near.networkId, config?.near.rpcUrl],
+  );
+  const { nearAccount, evmAccount, evmChainId } = state;
+  const nearConnector = (config: Config) => session.getConnector(config);
   return {
     nearAccount,
     evmAccount,
     evmChainId,
     async connectNear(config: Config) {
       // The connector emits the validated signIn accounts before resolving.
-      await (await nearConnector(config)).connect();
+      await session.connectNear(config);
     },
     async disconnectNear() {
-      await connector.current?.disconnect();
-      setNear("");
+      await session.disconnectNear();
     },
     async connectEvm() {
       const client = createWalletClient({
         chain: sepolia,
         transport: custom(injected()),
       });
-      const [account] = await client.requestAddresses();
-      setEvm(account);
-      setChain(await client.getChainId());
+      await session.connectEvm(
+        () => client.requestAddresses(),
+        () => client.getChainId(),
+      );
     },
     async switchEvm() {
+      const revision = session.invalidateEvm();
       await createWalletClient({ transport: custom(injected()) }).switchChain({
         id: sepolia.id,
       });
-      setChain(sepolia.id);
+      session.setEvm(revision, evmAccount, sepolia.id);
     },
     async sendNear(
       config: Config,
@@ -137,7 +120,7 @@ export function useWallets() {
             "before-submission",
           );
         }
-        setNear(selected.length === 1 ? selected[0].accountId : "");
+        session.selectNear(wallet.manifest.id, selected);
         if (selected.length !== 1 || selected[0].accountId !== expectedAccount)
           throw new ActionFailure(
             `Meteor selected accounts: ${accountIds(selected)}. Select ${expectedAccount} on NEAR testnet before signing. Disconnect NEAR, then reconnect with the expected account. No financial transaction was submitted.`,

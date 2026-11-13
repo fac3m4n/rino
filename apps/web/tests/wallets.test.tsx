@@ -20,7 +20,7 @@ const config = {
 };
 const vault = "0x1234567890123456789012345678901234567890";
 function fixture(mode: string) {
-  const provider = installFundingProvider(mode);
+  const provider = installFundingProvider(mode, true);
   vi.stubGlobal("window", { ethereum: provider });
   return (
     globalThis as unknown as {
@@ -354,4 +354,27 @@ it("a later NEAR rejection preserves confirmed earlier effects and hashes", asyn
     outcome: "partial",
     knownHashes: ["confirmed-one"],
   });
+});
+
+it("direct Meteor confirmation persists only the actual selected public account and wallet", async () => {
+  const values = new Map<string, string>();
+  vi.stubGlobal("window", {
+    localStorage: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    },
+  });
+  nearFixture.manifestId = "meteor-wallet";
+  nearFixture.selected = ["lender.test"];
+  await expect(
+    wallet().sendNear(nearConfig, [nearAction], "borrower.test"),
+  ).rejects.toMatchObject({ uncertainMutation: false });
+  expect(JSON.parse(values.get("proofcredit.wallet.near.v1")!)).toEqual({
+    version: 1,
+    networkId: "testnet",
+    walletId: "meteor-wallet",
+    accountId: "lender.test",
+  });
+  expect(nearFixture.calls).toBe(0);
 });

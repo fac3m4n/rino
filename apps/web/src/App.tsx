@@ -145,7 +145,7 @@ export default function App() {
       previous?.focus();
     };
   }, [drawer]);
-  const wallets = useWallets();
+  const wallets = useWallets(config);
   const inflight = useRef(false);
   const snapshots = useRef<SnapshotLane<Snapshot> | null>(null);
   const latest = useRef<Snapshot | null>(null);

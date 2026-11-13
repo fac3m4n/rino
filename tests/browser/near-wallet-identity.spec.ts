@@ -80,10 +80,12 @@ async function installWallet(
               if (config.network !== 'testnet') throw new Error('Expected testnet');
             }
             on(event, listener) { this.listeners[event] = listener; }
+            off(event) { delete this.listeners[event]; }
             async connect() {
               this.account = options.accounts[this.connections++];
               if (!this.account) throw new Error('No fixture account available');
               this.listeners['wallet:signIn']?.({
+                wallet: await this.wallet(),
                 accounts: [{ accountId: this.account, publicKey: 'fixture-only' }],
                 success: true,
                 source: 'signIn',
@@ -94,6 +96,7 @@ async function installWallet(
             }
             async wallet() {
               return {
+                manifest: { id: 'generic-wallet' },
                 getAccounts: async ({ network }) => {
                   if (network !== 'testnet') throw new Error('Expected testnet');
                   const accountId = options.immediateAccount ?? this.account;
