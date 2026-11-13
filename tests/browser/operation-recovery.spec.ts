@@ -1,7 +1,11 @@
 /** Controlled external boundaries; real App/client/wallet guards, no chain evidence. */
 import { expect, test, type Page } from "@playwright/test";
-import { configFixture, stateFixture } from "../../apps/web/tests/fixtures";
-import type { OperationView } from "@proofcredit/coordinator/api";
+import {
+  configFixture,
+  stateFixture,
+  settlementFixture,
+} from "../../apps/web/tests/fixtures";
+import type { State, OperationView } from "@proofcredit/coordinator/api";
 
 const borrower = "proofcredit-b-2593ce.testnet";
 const lender = "proofcredit-l-2593ce.testnet";
@@ -11,16 +15,21 @@ const proof = (page: Page) =>
 
 const goodHash = "11111111111111111111111111111111";
 const wrongHash = "11111111111111111111111111111112";
+const finalityDetail =
+  "Preparation stopped while awaiting an eligible finalized checkpoint on both fixed providers. No wallet request was made. Refresh chain state and try again when finality has advanced.";
 async function installRecovery(
   page: Page,
   options: {
     seed?: "unknown" | "partial" | "terminal";
     lostHashReply?: boolean;
+    stoppedRelease?: boolean;
   } = {},
 ) {
   let operation: OperationView | undefined;
   let submissions = 0;
   let checks = 0;
+  let creates = 0;
+  let freshReadsAfterCreate = 0;
   const config = {
     ...configFixture,
     mode: "public",
@@ -32,7 +41,7 @@ async function installRecovery(
       lenderId: lender,
     },
   };
-  const state = {
+  const state: State = {
     ...stateFixture,
     market: {
       ...stateFixture.market!,
@@ -45,6 +54,40 @@ async function installRecovery(
     proofStatus: "None",
     evidence: null,
   };
+  if (options.stoppedRelease) {
+    state.market = {
+      ...state.market!,
+      phase: "Repaid",
+      debt_units: "0",
+      borrowed_at: "80",
+      borrower_balance_units: "0",
+    };
+    state.settlement = {
+      ...settlementFixture,
+      stage: "Signed",
+      branch: "repay",
+      balance_wei: "120000000000000000",
+      accounted_balance_wei: "120000000000000000",
+      checkpoint_block_number: "42",
+      candidate_count: 1,
+      current_intent: {
+        transfer: {
+          chain_id: "11155111",
+          nonce: "0",
+          to: state.market.borrower_recipient,
+          value: "119997900000000000",
+          gas_limit: "21000",
+          gas_price: "100000000",
+        },
+        signing_preimage: "0x02",
+        signing_digest: `0x${"11".repeat(32)}`,
+        before_balance_wei: "120000000000000000",
+        minimum_block_number: "42",
+      },
+    };
+    state.proofStatus = "Authenticated";
+    state.evidence = { balance_wei: "120000000000000000" };
+  }
   const action = {
     chain: "near",
     receiverId: config.near.controllerId,
@@ -124,17 +167,35 @@ async function installRecovery(
     }
   }
   await page.route("**/api/config*", (r) => r.fulfill({ json: config }));
-  await page.route("**/api/state*", (r) => r.fulfill({ json: state }));
+  await page.route("**/api/state*", (r) => {
+    if (creates && new URL(r.request().url()).searchParams.get("fresh") === "1")
+      freshReadsAfterCreate++;
+    return r.fulfill({ json: state });
+  });
   await page.route("**/api/receipts*", (r) => r.fulfill({ json: [] }));
   await page.route("**/api/operations**", async (r) => {
     if (r.request().method() === "GET")
       return r.fulfill({ json: operation ? [operation] : [] });
     const path = new URL(r.request().url()).pathname;
     const body = r.request().postDataJSON();
-    if (path === "/api/operations")
+    if (path === "/api/operations") {
+      creates++;
+      if (options.stoppedRelease) {
+        expect(body.action).toBe("settle");
+        expect(body.role).toBe("borrower");
+        operation = {
+          ...prepare(body.id),
+          action: "settle",
+          stage: "failed",
+          detail: finalityDetail,
+          steps: [],
+        };
+        return r.fulfill({ json: { operation } });
+      }
       return r.fulfill({
         json: { operation: prepare(body.id), walletActions: [action] },
       });
+    }
     if (path.endsWith("/observe") && operation) {
       if (body.event === "hash" && body.hash === wrongHash)
         return r.fulfill({
@@ -239,6 +300,12 @@ async function installRecovery(
             return accounts;
           }
           if (method === "eth_chainId") return "0xaa36a7";
+          if (method === "eth_sendTransaction") {
+            await (
+              globalThis as unknown as { recoverySubmitted(): Promise<void> }
+            ).recoverySubmitted();
+            throw new Error("Unexpected controlled Ethereum submission");
+          }
           throw new Error("Unexpected controlled RPC");
         },
       },
@@ -282,6 +349,8 @@ async function installRecovery(
     submissions: () => submissions,
     checks: () => checks,
     operation: () => operation,
+    creates: () => creates,
+    freshReadsAfterCreate: () => freshReadsAfterCreate,
   };
 }
 
@@ -387,4 +456,47 @@ test("@operation-recovery lost hash observation reply never reopens the wallet",
     page.getByRole("region", { name: "Operation recovery" }),
   ).toContainText(goodHash, { timeout: 3000 });
   expect(fixture.submissions()).toBe(1);
+});
+
+test("@release-preparation stopped finality preparation alerts without opening a wallet", async ({
+  page,
+}) => {
+  const fixture = await installRecovery(page, { stoppedRelease: true });
+  await page
+    .getByRole("button", { name: "Connect NEAR testnet", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: borrower, exact: true }),
+  ).toBeVisible({ timeout: 3000 });
+  await expect(page.getByTestId("loan-debt")).toHaveText("0 CREDIT");
+  await expect(page.getByTestId("settlement-stage")).toHaveText(
+    "Signed · awaiting inclusion",
+  );
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  const release = page.getByRole("button", {
+    name: "Release collateral",
+    exact: true,
+  });
+  await expect(release).toBeEnabled({ timeout: 3000 });
+  await release.click();
+  await expect.poll(fixture.creates, { timeout: 3000 }).toBe(1);
+  expect(fixture.submissions()).toBe(0);
+  // Regression: the real App currently reports generic success for this failed create.
+  await expect(page.getByRole("alert")).toHaveText(finalityDetail, {
+    timeout: 2000,
+  });
+  await expect(
+    page.getByRole("status").filter({ hasText: "Operation recorded." }),
+  ).toHaveCount(0);
+  await expect.poll(fixture.freshReadsAfterCreate, { timeout: 3000 }).toBe(1);
+  await expect(release).toBeEnabled({ timeout: 3000 });
+  await expect(
+    page.getByRole("region", { name: "Operation recovery" }),
+  ).toContainText(finalityDetail);
+  await page.reload();
+  await expect(
+    page.getByRole("region", { name: "Operation recovery" }),
+  ).toContainText(finalityDetail, { timeout: 3000 });
+  expect(fixture.submissions()).toBe(0);
+  expect(fixture.creates()).toBe(1);
 });

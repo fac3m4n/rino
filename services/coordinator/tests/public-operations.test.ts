@@ -247,6 +247,122 @@ async function fixture() {
     },
   };
 }
+const waitingMessage = (block: string) =>
+  `Captured block ${block}; awaiting both fixed providers finalized coverage before wallet request`;
+const finalityDetail =
+  "Preparation stopped while awaiting an eligible finalized checkpoint on both fixed providers. No wallet request was made. Refresh chain state and try again when finality has advanced.";
+const genericPreparationDetail =
+  "Preparation failed. No wallet request was made. Refresh chain state and review operation history before trying again.";
+
+it.each(["0", "12125413", "9".repeat(78)])(
+  "persists only safe finality-wait feedback for exact coordinator block %s and never prepares again on reopen",
+  async (block) => {
+    const f = await fixture();
+    let preparations = 0;
+    f.setPrepare(async () => {
+      preparations++;
+      throw new Error(waitingMessage(block), {
+        cause: new Error("https://rpc.invalid/?key=synthetic-secret"),
+      });
+    });
+    const first = await f.service.create({ ...request, action: "settle" });
+    expect(first).toEqual({
+      operation: expect.objectContaining({
+        stage: "failed",
+        unresolved: false,
+        detail: finalityDetail,
+        steps: [],
+      }),
+    });
+    const disk = await readFile(f.path, "utf8");
+    expect(JSON.parse(disk).operations[0].preparation).toEqual({
+      phase: "failed",
+      detail: "awaiting-finality",
+    });
+    expect(disk).not.toContain("synthetic-secret");
+    expect(disk).not.toContain("Captured block");
+    expect(JSON.stringify(first)).not.toContain("rpc.invalid");
+    await f.reload();
+    expect(f.service.list()[0].detail).toBe(finalityDetail);
+    expect(await f.service.create({ ...request, action: "settle" })).toEqual(
+      first,
+    );
+    expect(preparations).toBe(1);
+    expect(f.calls).toEqual([]);
+    expect(f.ethereumCalls).toBe(0);
+  },
+);
+
+const throwingMessage = Object.defineProperty(new Error(), "message", {
+  get() {
+    throw new Error("synthetic-secret accessor");
+  },
+});
+const throwingDescriptor = new Proxy(new Error(), {
+  getOwnPropertyDescriptor() {
+    throw new Error("synthetic-secret descriptor");
+  },
+});
+const throwingPrototype = new Proxy(new Error(), {
+  getPrototypeOf() {
+    throw new Error("synthetic-secret prototype");
+  },
+});
+it.each([
+  ["throwing message accessor", throwingMessage],
+  ["throwing descriptor proxy", throwingDescriptor],
+  ["throwing prototype proxy", throwingPrototype],
+  ["URL and key", new Error("https://rpc.invalid/?key=synthetic-secret")],
+  ["prefix", new Error(`synthetic-secret: ${waitingMessage("42")}`)],
+  ["suffix", new Error(`${waitingMessage("42")} synthetic-secret`)],
+  ["trailing newline", new Error(`${waitingMessage("42")}\n`)],
+  ["leading zero", new Error(waitingMessage("042"))],
+  ["negative block", new Error(waitingMessage("-1"))],
+  ["noninteger block", new Error(waitingMessage("42.5"))],
+  ["overlong block", new Error(waitingMessage("9".repeat(79)))],
+  [
+    "different provider wording",
+    new Error(waitingMessage("42").replace("both fixed", "one fixed")),
+  ],
+  ["string exception", waitingMessage("42")],
+  [
+    "arbitrary object",
+    { message: waitingMessage("42"), key: "synthetic-secret" },
+  ],
+  [
+    "nested cause",
+    new Error("synthetic-secret", { cause: new Error(waitingMessage("42")) }),
+  ],
+])(
+  "keeps unrecognized preparation error (%s) generic without exposing raw exception data",
+  async (_label, error) => {
+    const f = await fixture();
+    f.setPrepare(async () => {
+      throw error;
+    });
+    const result = await f.service.create(request);
+    expect(result).toEqual({
+      operation: expect.objectContaining({
+        stage: "failed",
+        unresolved: false,
+        detail: genericPreparationDetail,
+        steps: [],
+      }),
+    });
+    const disk = await readFile(f.path, "utf8");
+    expect(JSON.parse(disk).operations[0].preparation).toEqual({
+      phase: "failed",
+      detail: "failed",
+    });
+    expect(disk).not.toContain("synthetic-secret");
+    expect(disk).not.toContain("rpc.invalid");
+    expect(disk).not.toContain("Captured block");
+    await f.reload();
+    expect(f.service.list()[0].detail).toBe(genericPreparationDetail);
+    expect(f.calls).toEqual([]);
+  },
+);
+
 it("persists before preparation and returns the same frozen actions after a lost response/restart", async () => {
   const f = await fixture();
   const first = await f.service.create(request);
@@ -428,39 +544,51 @@ it("caches failed historical checks by hash/context across changed operation IDs
   expect(f.calls).toHaveLength(count);
   expect(f.service.list()).toEqual([]);
 });
-it("preserves a server relay before a thrown response and never invokes preparation again after restart", async () => {
-  const f = await fixture();
-  let broadcasts = 0;
-  f.setPrepare(async (_r, beforeRelay) => {
-    await beforeRelay({
-      chain: "ethereum",
-      kind: "relay",
-      intent: {
-        chainId: "11155111",
-        from: `0x${"11".repeat(20)}`,
-        to: `0x${"22".repeat(20)}`,
-        valueWei: "42",
-        data: "0x",
-      },
-      nonce: "7",
-      candidateHash: `0x${"33".repeat(32)}`,
+it.each(["lost response with credentials", waitingMessage("12125413")])(
+  "preserves a server relay before a thrown response (%s) and never invokes preparation again after restart",
+  async (message) => {
+    const f = await fixture();
+    let broadcasts = 0;
+    f.setPrepare(async (_r, beforeRelay) => {
+      await beforeRelay({
+        chain: "ethereum",
+        kind: "relay",
+        intent: {
+          chainId: "11155111",
+          from: `0x${"11".repeat(20)}`,
+          to: `0x${"22".repeat(20)}`,
+          valueWei: "42",
+          data: "0x",
+        },
+        nonce: "7",
+        candidateHash: `0x${"33".repeat(32)}`,
+      });
+      expect(
+        JSON.parse(await readFile(f.path, "utf8")).operations[0].steps[0]
+          .hashes[0].hash,
+      ).toBe(`0x${"33".repeat(32)}`);
+      broadcasts++;
+      throw Error(message);
     });
     expect(
-      JSON.parse(await readFile(f.path, "utf8")).operations[0].steps[0]
-        .hashes[0].hash,
-    ).toBe(`0x${"33".repeat(32)}`);
-    broadcasts++;
-    throw Error("lost response with credentials");
-  });
-  expect(
-    (await f.service.create({ ...request, action: "settle" })).operation,
-  ).toMatchObject({ stage: "needs-check", unresolved: true });
-  await f.reload();
-  expect(
-    await f.service.create({ ...request, action: "settle" }),
-  ).not.toHaveProperty("walletActions");
-  expect(broadcasts).toBe(1);
-});
+      (await f.service.create({ ...request, action: "settle" })).operation,
+    ).toMatchObject({
+      stage: "needs-check",
+      unresolved: true,
+      detail: "Submission is unresolved; check known evidence.",
+      steps: [{ started: true, hashes: [{ hash: `0x${"33".repeat(32)}` }] }],
+    });
+    expect(f.journal.get(ID)!.preparation).toEqual({
+      phase: "interrupted",
+      detail: "interrupted",
+    });
+    await f.reload();
+    expect(
+      await f.service.create({ ...request, action: "settle" }),
+    ).not.toHaveProperty("walletActions");
+    expect(broadcasts).toBe(1);
+  },
+);
 it("keeps partial batch success separate from a later unknown step", async () => {
   const f = await fixture();
   f.setPrepare(async () => ({ steps: [expected(), expected("borrow")] }));

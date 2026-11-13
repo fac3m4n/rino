@@ -437,6 +437,11 @@ export default function App() {
             : undefined,
         );
         if (!lane.isCurrent(token)) return;
+        if (
+          result.operation.stage === "failed" &&
+          result.operation.steps.length === 0
+        )
+          throw Error(result.operation.detail);
         if (result.funding) {
           const funding = result.funding;
           if (

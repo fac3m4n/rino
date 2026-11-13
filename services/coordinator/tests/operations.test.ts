@@ -240,6 +240,86 @@ describe("durable operation recovery", () => {
   });
 });
 
+// Stopped preparation must retain safe feedback without reclassifying submitted work.
+describe("stopped preparation feedback", () => {
+  it("persists awaiting-finality only as failed preparation without steps", async () => {
+    const { journal, path } = await fixture();
+    await journal.start(request);
+    await journal.update(id, (r) => {
+      r.preparation = {
+        phase: "failed",
+        detail: "awaiting-finality" as StoredOperation["preparation"]["detail"],
+      };
+    });
+    const reopened = await OperationJournal.open(path, binding);
+    expect(reopened.get(id)!.preparation).toEqual({
+      phase: "failed",
+      detail: "awaiting-finality",
+    });
+    expect(reopened.list()[0]).toMatchObject({
+      stage: "failed",
+      unresolved: false,
+      detail:
+        "Preparation stopped while awaiting an eligible finalized checkpoint on both fixed providers. No wallet request was made. Refresh chain state and try again when finality has advanced.",
+      steps: [],
+    });
+  });
+  it.each(["preparing", "prepared", "interrupted", "failed"] as const)(
+    "reopens legacy %s preparation records whose detail equals phase",
+    async (phase) => {
+      const { journal, path } = await fixture();
+      await journal.start(request);
+      await journal.update(id, (r) => {
+        r.preparation = { phase, detail: phase };
+      });
+      const reopened = await OperationJournal.open(path, binding);
+      expect(reopened.get(id)!.preparation).toEqual(
+        phase === "preparing"
+          ? { phase: "interrupted", detail: "interrupted" }
+          : { phase, detail: phase },
+      );
+      if (phase === "failed")
+        expect(reopened.list()[0].detail).toContain(
+          "No wallet request was made",
+        );
+    },
+  );
+  it.each([
+    { phase: "preparing", started: undefined },
+    { phase: "prepared", started: undefined },
+    { phase: "interrupted", started: undefined },
+    { phase: "failed", started: false },
+    { phase: "failed", started: true },
+  ] as const)(
+    "rejects awaiting-finality with phase=$phase started=$started in updates and disk records",
+    async ({ phase, started }) => {
+      const { journal, path } = await fixture();
+      await journal.start(request);
+      const before = await readFile(path, "utf8");
+      const change = (r: StoredOperation) => {
+        r.preparation = {
+          phase,
+          detail:
+            "awaiting-finality" as StoredOperation["preparation"]["detail"],
+        };
+        if (started !== undefined)
+          r.steps = [{ expected: near(), started, hashes: [] }];
+      };
+      await expect(journal.update(id, change)).rejects.toThrow(
+        "invalid operation data",
+      );
+      expect(await readFile(path, "utf8")).toBe(before);
+      expect(journal.get(id)!.preparation.phase).toBe("preparing");
+      const corrupt = JSON.parse(before);
+      change(corrupt.operations[0]);
+      await writeFile(path, JSON.stringify(corrupt));
+      await expect(OperationJournal.open(path, binding)).rejects.toThrow(
+        "operation journal unavailable or corrupt",
+      );
+    },
+  );
+});
+
 // A verified first step must not erase a later unknown step or imply complete settlement.
 describe("independent verified step reduction", () => {
   it("keeps a two-step partial operation unresolved across reload", async () => {

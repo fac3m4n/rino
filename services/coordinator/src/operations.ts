@@ -43,7 +43,8 @@ export interface StoredOperation {
   historical: boolean;
   preparation: {
     phase: "preparing" | "prepared" | "interrupted" | "failed";
-    detail: "preparing" | "prepared" | "interrupted" | "failed";
+    detail:
+      "preparing" | "prepared" | "interrupted" | "failed" | "awaiting-finality";
   };
   steps: StoredStep[];
   continued: boolean;
@@ -339,16 +340,21 @@ function validateRecord(
     typeof r.continued !== "boolean"
   )
     fail();
+  if (!Array.isArray(r.steps) || r.steps.length > 2) fail();
   const p = object(r.preparation);
   keys(p, ["phase", "detail"]);
   if (
     !["preparing", "prepared", "interrupted", "failed"].includes(
       p.phase as string,
     ) ||
-    p.detail !== p.phase
+    (p.detail !== p.phase &&
+      !(
+        p.detail === "awaiting-finality" &&
+        p.phase === "failed" &&
+        r.steps.length === 0
+      ))
   )
     fail();
-  if (!Array.isArray(r.steps) || r.steps.length > 2) fail();
   for (const value of r.steps) {
     const s = object(value);
     keys(s, ["expected", "started", "hashes"], ["observation", "diagnostic"]);
@@ -479,7 +485,12 @@ export function operationView(r: StoredOperation): OperationView {
     stage,
     unresolved,
     continued: r.continued,
-    detail: details[stage],
+    detail:
+      r.preparation.phase === "failed" && steps.length === 0
+        ? r.preparation.detail === "awaiting-finality"
+          ? "Preparation stopped while awaiting an eligible finalized checkpoint on both fixed providers. No wallet request was made. Refresh chain state and try again when finality has advanced."
+          : "Preparation failed. No wallet request was made. Refresh chain state and review operation history before trying again."
+        : details[stage],
     steps,
   };
 }

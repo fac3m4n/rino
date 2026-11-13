@@ -154,14 +154,36 @@ export class PublicOperations {
           ...this.result(saved),
           ...(prepared.state ? { state: prepared.state } : {}),
         };
-      } catch {
+      } catch (error) {
+        let awaitingFinality = false;
+        try {
+          // Read only an Error's own data value; arbitrary accessors/causes are untrusted.
+          const message =
+            error instanceof Error
+              ? Object.getOwnPropertyDescriptor(error, "message")?.value
+              : undefined;
+          awaitingFinality =
+            typeof message === "string" &&
+            message.length <= 256 &&
+            /^Captured block (?:0|[1-9][0-9]{0,77}); awaiting both fixed providers finalized coverage before wallet request$/.exec(
+              message,
+            )?.[0] === message;
+        } catch {
+          // Hostile error objects must not prevent durable generic failure metadata.
+        }
         const saved = await this.dependencies.journal.update(
           request.id,
           (r) => {
             const phase = r.steps.some((s) => s.started)
               ? "interrupted"
               : "failed";
-            r.preparation = { phase, detail: phase };
+            r.preparation = {
+              phase,
+              detail:
+                phase === "failed" && r.steps.length === 0 && awaitingFinality
+                  ? "awaiting-finality"
+                  : phase,
+            };
           },
         );
         return { operation: operationView(saved) };
