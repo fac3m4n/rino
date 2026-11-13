@@ -64,6 +64,11 @@ const credit = (value?: string | null) =>
   value ? formatUnits(value, 6, 6) : "—";
 const eth = (value?: string | null) =>
   value ? formatUnits(value, 18, 6) : "—";
+// Fee display only: retain nonzero meaning below the six-decimal ETH precision.
+const ethFee = (value?: string | null) =>
+  value && BigInt(value) > 0n && BigInt(value) < 1_000_000_000_000n
+    ? "<0.000001"
+    : eth(value);
 const actionNames: Record<ActionName, string> = {
   initialize: "Initialize local market",
   fund: "Fund vault",
@@ -1110,18 +1115,21 @@ export default function App() {
                     {credit(market?.terms.debt_units)} <small>CREDIT</small>
                   </b>
                 </div>
-                <div className="repayment-row">
-                  <span>
-                    {market?.maturity
-                      ? "Maturity · chain time"
-                      : "Collateral network"}
-                  </span>
-                  <b>
-                    {market?.maturity && state?.nearTimeSeconds
-                      ? `${BigInt(market.maturity) > BigInt(state.nearTimeSeconds) ? BigInt(market.maturity) - BigInt(state.nearTimeSeconds) : 0n}s remaining`
-                      : "Ethereum"}
-                  </b>
-                </div>
+                {market?.phase !== "Closed" &&
+                  settlement?.stage !== "Complete" && (
+                    <div className="repayment-row">
+                      <span>
+                        {market?.maturity
+                          ? "Maturity · chain time"
+                          : "Collateral network"}
+                      </span>
+                      <b>
+                        {market?.maturity && state?.nearTimeSeconds
+                          ? `${BigInt(market.maturity) > BigInt(state.nearTimeSeconds) ? BigInt(market.maturity) - BigInt(state.nearTimeSeconds) : 0n}s remaining`
+                          : "Ethereum"}
+                      </b>
+                    </div>
+                  )}
                 <div className="repayment-row">
                   <span>Loan term</span>
                   <b>
@@ -1193,7 +1201,7 @@ export default function App() {
                       </div>
                       <div>
                         <dt>Fees paid</dt>
-                        <dd>{eth(settlement.fees_paid_wei)} ETH</dd>
+                        <dd>{ethFee(settlement.fees_paid_wei)} ETH</dd>
                       </div>
                     </dl>
                     <p>
@@ -1594,7 +1602,7 @@ export default function App() {
                       <span>Block {receipt.blockNumber ?? "pending"}</span>
                       {receipt.gasUsed && <span>Gas {receipt.gasUsed}</span>}
                       {receipt.feeWei && (
-                        <span>Fee {eth(receipt.feeWei)} ETH</span>
+                        <span>Fee {ethFee(receipt.feeWei)} ETH</span>
                       )}
                     </div>
                   </article>

@@ -4,8 +4,9 @@ import {
   configFixture,
   stateFixture,
   operationFixture,
+  settlementFixture,
 } from "../../apps/web/tests/fixtures";
-import type { Receipt } from "@proofcredit/coordinator/api";
+import type { Receipt, State } from "@proofcredit/coordinator/api";
 
 test.setTimeout(30000);
 test.use({ actionTimeout: 4000 });
@@ -231,7 +232,7 @@ test("@rino-ui both themes reflow with long IDs and retain keyboard evidence/rec
         );
       expect(unnamed).toBe(0);
       await page.screenshot({
-        path: `.superpowers/sdd/2026-11-13-rino-product-experience/task2-${info.project.name}-${theme}-${width}.png`,
+        path: info.outputPath(`theme-${theme}-${width}.png`),
         fullPage: true,
       });
     }
@@ -258,6 +259,114 @@ test("@rino-ui both themes reflow with long IDs and retain keyboard evidence/rec
   await expect(page.getByText("42.5%", { exact: true })).toBeVisible();
   await expect(page.getByText("600 sec", { exact: true })).toBeVisible();
 });
+
+// Catches a historical maturity being shown as an active countdown after closure.
+test("@rino-ui closed future maturity has no remaining countdown while active chain time is retained", async ({
+  page,
+}) => {
+  let terminal = true;
+  await page.route("**/api/state*", (r) => {
+    const state: State = terminal
+      ? {
+          ...stateFixture,
+          market: { ...stateFixture.market!, phase: "Closed", debt_units: "0" },
+          settlement: {
+            ...settlementFixture,
+            stage: "Complete",
+            branch: "repay",
+            retired: true,
+          },
+          ethereum: {
+            ...stateFixture.ethereum!,
+            vaultBalanceWei: "0",
+            vaultNonce: "1",
+          },
+        }
+      : stateFixture;
+    return r.fulfill({ json: state });
+  });
+  await page.goto("/");
+  const panel = page.locator(".action-panel");
+  await expect(
+    panel.getByRole("heading", { name: "Loan closed", exact: true }),
+  ).toBeVisible({ timeout: 4000 });
+  await expect(panel.getByText(/s remaining$/)).toHaveCount(0, {
+    timeout: 4000,
+  });
+  terminal = false;
+  await page.reload();
+  await expect(
+    panel.getByText("Maturity · chain time", { exact: true }),
+  ).toBeVisible({ timeout: 4000 });
+  await expect(
+    panel.getByText("100s remaining", { exact: true }),
+  ).toBeVisible();
+});
+
+// Catches positive fees being truncated to zero, while retaining zero and ordinary values.
+for (const [feeWei, display] of [
+  ["0", "0"],
+  ["798000", "<0.000001"],
+  ["1000000000000", "0.000001"],
+  ["1234567890000000", "0.001234"],
+]) {
+  test(`@rino-ui fee ${feeWei} retains its nonzero meaning in summary and receipt evidence`, async ({
+    page,
+  }) => {
+    await page.route("**/api/state*", (r) =>
+      r.fulfill({
+        json: {
+          ...stateFixture,
+          settlement: {
+            ...settlementFixture,
+            stage: "Complete",
+            branch: "repay",
+            retired: true,
+            fees_paid_wei: feeWei,
+          },
+          market: { ...stateFixture.market!, phase: "Closed", debt_units: "0" },
+          ethereum: {
+            ...stateFixture.ethereum!,
+            vaultBalanceWei: "0",
+            vaultNonce: "1",
+          },
+        } satisfies State,
+      }),
+    );
+    const receipt: Receipt = {
+      id: "fee",
+      chain: "ethereum",
+      action: "release",
+      status: "success",
+      hash: `0x${"ab".repeat(32)}`,
+      blockNumber: "42",
+      gasUsed: "21000",
+      feeWei,
+      detail: "Fixture fee evidence only.",
+    };
+    await page.route("**/api/receipts*", (r) => r.fulfill({ json: [receipt] }));
+    await page.goto("/");
+    const fees = page
+      .locator(".settlement-box dl > div")
+      .filter({ has: page.getByText("Fees paid", { exact: true }) });
+    await expect
+      .soft(fees.locator("dd"))
+      .toHaveText(`${display} ETH`, { timeout: 4000 });
+    await page
+      .getByRole("button", { name: "Open evidence", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog");
+    await expect(
+      dialog.getByText(`Fee ${display} ETH`, { exact: true }),
+    ).toBeVisible({ timeout: 4000 });
+    await dialog
+      .getByText("Raw state & artifact evidence", { exact: true })
+      .click();
+    await expect(dialog.locator("pre")).toContainText(
+      `"fees_paid_wei": "${feeWei}"`,
+    );
+  });
+}
 
 // Catches technical instructions dominating an idle view and terminal evidence losing disclosure access.
 test("@rino-ui idle recovery stays compact and terminal evidence expands on demand", async ({
