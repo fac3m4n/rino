@@ -64,6 +64,7 @@ async function fixture() {
     },
   } as unknown as State;
   let candidate: SignedTransaction | null = null;
+  const nonces = new Map<bigint, bigint>();
   const calls: Array<{ provider: number; method: string; params: any[] }> = [];
   const header = (number: bigint) => ({
     number: `0x${number.toString(16)}`,
@@ -98,7 +99,7 @@ async function fixture() {
       );
     else if (q.method === "eth_getProof")
       result = {
-        nonce: `0x${(BigInt(state.settlement!.expected_nonce) + (BigInt(q.params[2]) >= inclusion ? 1n : 0n)).toString(16)}`,
+        nonce: `0x${(nonces.get(BigInt(q.params[2])) ?? BigInt(state.settlement!.expected_nonce) + (state.settlement!.current_intent && BigInt(q.params[2]) >= inclusion ? 1n : 0n)).toString(16)}`,
         accountProof: [
           `0x${BigInt(q.params[2]).toString(16).padStart(2, "0")}`,
         ],
@@ -154,6 +155,8 @@ async function fixture() {
   return {
     adapter,
     calls,
+    state,
+    nonces,
     issue,
     setHeads: (l: bigint[], f: bigint[]) => {
       latest = l;
@@ -181,7 +184,7 @@ it("public confirmation replaces pre-inclusion preparation capture and waits for
     "100",
   );
   await f.issue(0);
-  f.setHeads([102n, 102n], [102n, 101n]);
+  f.setHeads([102n, 102n], [102n, 100n]);
   await expect(
     f.adapter.action({ action: "settle", role: "borrower" }),
   ).rejects.toThrow("both fixed providers finalized");
@@ -240,4 +243,88 @@ it("public heads below receipt inclusion fail closed without creating a below-fl
   expect(
     (await readdir(f.adapter.directory)).some((p) => p.startsWith("capture-")),
   ).toBe(false);
+});
+
+// Choosing latest here would force an avoidable finality wait above the receipt.
+it("confirms immediately at common finalized inclusion with exact Alchemy proof bytes", async () => {
+  const f = await fixture();
+  await f.adapter.action({ action: "settle", role: "borrower" });
+  await f.issue(0);
+  f.calls.length = 0;
+  f.setHeads([110n, 109n], [102n, 101n]);
+  const result = await f.adapter.action({ action: "settle", role: "borrower" });
+  const bundle = (result.walletActions![0].args.bundle as any).checkpoint;
+  expect(bundle.block_number).toBe("101");
+  expect(bundle.vault_account_proof).toEqual(["0x65"]);
+  expect(bundle.beneficiary_account_proof).toEqual(["0x65"]);
+  const captureCalls = f.calls.filter(
+    (c) => c.method !== "eth_getTransactionReceipt",
+  );
+  expect(captureCalls).toHaveLength(10);
+  expect(captureCalls.some((c) => c.params[0] === "latest")).toBe(false);
+  expect(
+    captureCalls
+      .filter((c) => c.method === "eth_getProof")
+      .map((c) => c.provider),
+  ).toEqual([1, 1]);
+  f.calls.length = 0;
+  await f.adapter.action({ action: "settle", role: "borrower" });
+  expect(
+    f.calls.filter((c) => c.method !== "eth_getTransactionReceipt"),
+  ).toHaveLength(4);
+});
+it("preparation respects accepted checkpoint and nonce after the first settlement leg", async () => {
+  const f = await fixture();
+  await f.adapter.action({ action: "settle", role: "borrower" });
+  f.resetIntent("1");
+  f.state.settlement!.checkpoint_block_number = "105";
+  f.nonces.set(100n, 0n);
+  f.nonces.set(106n, 1n);
+  f.setHeads([107n, 106n], [102n, 100n]);
+  f.calls.length = 0;
+  await expect(
+    f.adapter.action({ action: "settle", role: "borrower" }),
+  ).rejects.toThrow("Captured block 106");
+  expect(
+    f.calls.filter((c) => c.method === "eth_getProof").map((c) => c.params[2]),
+  ).toEqual(["0x6a", "0x6a"]);
+  expect(
+    JSON.parse(await readFile(f.cache("0"), "utf8")).bundle.block_number,
+  ).toBe("100");
+  f.setHeads([110n, 109n], [107n, 106n]);
+  f.calls.length = 0;
+  const result = await f.adapter.action({ action: "settle", role: "borrower" });
+  expect((result.walletActions![0].args.bundle as any).block_number).toBe(
+    "106",
+  );
+  expect(f.calls.filter((c) => c.method === "eth_getProof")).toHaveLength(0);
+});
+it("wrong finalized preparation nonce uses one recent target without fetching disqualified beneficiary proof", async () => {
+  const f = await fixture();
+  f.resetIntent("1");
+  f.nonces.set(100n, 0n);
+  f.nonces.set(102n, 1n);
+  f.setHeads([103n, 102n], [101n, 100n]);
+  await expect(
+    f.adapter.action({ action: "settle", role: "borrower" }),
+  ).rejects.toThrow("Captured block 102");
+  const proofs = f.calls.filter((c) => c.method === "eth_getProof");
+  expect(proofs.map((c) => [c.params[0], c.params[2]])).toEqual([
+    [f.state.market!.vault, "0x64"],
+    [f.state.market!.vault, "0x66"],
+    [recipient, "0x66"],
+  ]);
+  // The initial two latest reads calculate the unchanged action-local fee.
+  expect(f.calls.length - 2).toBeLessThanOrEqual(15);
+});
+it("confirmation refuses both finalized and latest state with a pre-transaction nonce", async () => {
+  const f = await fixture();
+  await f.issue(0);
+  f.nonces.set(101n, 0n);
+  f.nonces.set(103n, 0n);
+  f.setHeads([104n, 103n], [102n, 101n]);
+  await expect(
+    f.adapter.action({ action: "settle", role: "borrower" }),
+  ).rejects.toThrow("nonce");
+  expect(f.calls.filter((c) => c.method === "eth_getProof")).toHaveLength(2);
 });

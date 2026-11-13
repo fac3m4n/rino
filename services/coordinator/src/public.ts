@@ -354,109 +354,196 @@ export class PublicCoordinator {
       gas: "300000000000000",
     };
   }
-  private async bundle(
-    vault: string,
-    to?: string,
-    nonce = "0",
-    minimumBlock = 0n,
-    collateral?: { terms: Terms; liveBalance: unknown },
-  ): Promise<any> {
+  private async bundle(options: {
+    vault: string;
+    to?: string;
+    cacheNonce: string;
+    expectedNonce: string;
+    purpose: "collateral" | "prepare" | "confirm";
+    minimumBlock?: bigint;
+    collateral?: { terms: Terms; liveBalance: unknown };
+  }): Promise<any> {
+    const { vault, to, cacheNonce, expectedNonce, purpose, collateral } =
+      options;
+    const minimumBlock = options.minimumBlock ?? 0n;
     const file = resolve(
       this.directory,
-      `capture-${to ?? "collateral"}-${nonce}.json`,
+      `capture-${to ?? "collateral"}-${cacheNonce}.json`,
     );
+    // Selection hints never enter the protocol bundle. Workers authenticate the
+    // original witness and controller rules independently of these local hints.
+    const quantity = (value: unknown): bigint => {
+      if (
+        typeof value !== "string" ||
+        value.length > 66 ||
+        !/^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/.test(value)
+      )
+        throw Error("malformed public checkpoint quantity");
+      return BigInt(value);
+    };
+    const header = (value: any) => {
+      if (
+        !value ||
+        typeof value !== "object" ||
+        !/^0x[0-9a-fA-F]{64}$/.test(value.hash) ||
+        !/^0x[0-9a-fA-F]{64}$/.test(value.stateRoot)
+      )
+        throw Error("malformed public checkpoint header");
+      quantity(value.number);
+      quantity(value.timestamp);
+      return value;
+    };
+    const readHeads = async (tag: "latest" | "finalized") =>
+      (
+        await Promise.all(
+          this.#urls.map((u) =>
+            ethereum(u, "eth_getBlockByNumber", [tag, false]),
+          ),
+        )
+      ).map(header);
+    const commonHeight = (heads: any[]) =>
+      heads.map((b) => quantity(b.number)).reduce((a, b) => (a < b ? a : b));
+    const readCanonical = async (number: bigint) => {
+      const tag = `0x${number.toString(16)}`;
+      const headers = (
+        await Promise.all(
+          this.#urls.map((u) =>
+            ethereum(u, "eth_getBlockByNumber", [tag, false]),
+          ),
+        )
+      ).map(header);
+      if (
+        headers.some((b) => quantity(b.number) !== number) ||
+        headers[0].hash !== headers[1].hash ||
+        headers[0].stateRoot !== headers[1].stateRoot ||
+        headers[0].timestamp !== headers[1].timestamp
+      )
+        throw Error("public checkpoint quorum mismatch");
+      return headers[0];
+    };
+    const fresh = (timestamp: bigint) => {
+      const now = BigInt(Math.floor(Date.now() / 1000));
+      if (timestamp > now)
+        throw Error("public checkpoint timestamp is in the future");
+      return now - timestamp <= 3600n;
+    };
+    const proofBytes = (proof: any): string[] => {
+      if (
+        !Array.isArray(proof?.accountProof) ||
+        !proof.accountProof.length ||
+        proof.accountProof.some(
+          (p: unknown) =>
+            typeof p !== "string" || !/^0x(?:[0-9a-fA-F]{2})+$/.test(p),
+        )
+      )
+        throw Error("malformed public account proof");
+      return proof.accountProof;
+    };
+    const fundedLive =
+      collateral &&
+      collateralSufficient(collateral.terms, collateral.liveBalance);
+    const inadequate = (balance: unknown) =>
+      collateral &&
+      fundedLive &&
+      !collateralSufficient(collateral.terms, balance);
     let captured: any;
     try {
       captured = JSON.parse(await readFile(file, "utf8"));
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
     }
-    const now = BigInt(Math.floor(Date.now() / 1000));
+    if (captured && !fresh(BigInt(captured.bundle.block_timestamp)))
+      captured = undefined;
     if (
-      !captured ||
-      captured.vault !== vault ||
-      // Provider balance is only a cache invalidation hint. The worker and
-      // controller still authenticate the unchanged account proof itself.
-      (collateral &&
-        !collateralSufficient(collateral.terms, captured.balanceWei) &&
-        collateralSufficient(collateral.terms, collateral.liveBalance)) ||
-      BigInt(captured.bundle.block_number) < minimumBlock ||
-      now - BigInt(captured.bundle.block_timestamp) > 3600n
-    ) {
-      const latest = await Promise.all(
-        this.#urls.map((u) =>
-          ethereum(u, "eth_getBlockByNumber", ["latest", false]),
-        ),
-      );
-      const number = latest
-        .map((x) => BigInt(x.number))
-        .reduce((a, b) => (a < b ? a : b));
-      if (number < minimumBlock) {
-        this.waiting = `Awaiting both fixed providers latest heads at receipt inclusion ${minimumBlock}`;
+      captured &&
+      (captured.vault !== vault ||
+        captured.purpose !== purpose ||
+        captured.expectedNonce !== expectedNonce ||
+        captured.observedNonce !== expectedNonce ||
+        BigInt(captured.bundle.block_number) < minimumBlock ||
+        inadequate(captured.balanceWei))
+    )
+      captured = undefined;
+    if (!captured) {
+      let unsuitable =
+        "checkpoint below required receipt inclusion or accepted checkpoint";
+      const captureAt = async (number: bigint) => {
+        if (number < minimumBlock) return undefined;
+        const b = await readCanonical(number);
+        if (!fresh(quantity(b.timestamp))) {
+          unsuitable = "checkpoint is stale";
+          return undefined;
+        }
+        const tag = `0x${number.toString(16)}`;
+        // Alchemy supplies only untrusted witness bytes; both fixed providers
+        // retain canonical-header and finalized-coverage authority.
+        const p = await ethereum(this.#urls[1], "eth_getProof", [
+          vault,
+          [],
+          tag,
+        ]);
+        const vaultProof = proofBytes(p);
+        const observedNonce = quantity(p.nonce).toString();
+        const balanceWei = collateral
+          ? quantity(p.balance).toString()
+          : undefined;
+        if (observedNonce !== expectedNonce) {
+          unsuitable = `checkpoint vault nonce does not match expected nonce ${expectedNonce}`;
+          return undefined;
+        }
+        if (inadequate(balanceWei)) {
+          unsuitable = "checkpoint predates sufficient collateral funding";
+          return undefined;
+        }
+        const base = {
+          block_number: number.toString(),
+          block_hash: b.hash,
+          state_root: b.stateRoot,
+          block_timestamp: quantity(b.timestamp).toString(),
+        };
+        const bundle = to
+          ? {
+              ...base,
+              vault_account_proof: vaultProof,
+              beneficiary_account_proof: proofBytes(
+                await ethereum(this.#urls[1], "eth_getProof", [to, [], tag]),
+              ),
+            }
+          : { ...base, account_proof: vaultProof };
+        return {
+          vault,
+          purpose,
+          expectedNonce,
+          observedNonce,
+          bundle,
+          ...(collateral ? { balanceWei } : {}),
+        };
+      };
+      captured = await captureAt(commonHeight(await readHeads("finalized")));
+      if (!captured)
+        captured = await captureAt(commonHeight(await readHeads("latest")));
+      if (!captured) {
+        this.waiting = `Awaiting suitable public checkpoint: ${unsuitable}`;
         throw Error(this.waiting);
       }
-      const tag = `0x${number.toString(16)}`;
-      const headers = await Promise.all(
-        this.#urls.map((u) =>
-          ethereum(u, "eth_getBlockByNumber", [tag, false]),
-        ),
-      );
-      if (
-        headers.some((header) => BigInt(header.number) !== number) ||
-        headers[0].hash !== headers[1].hash ||
-        headers[0].stateRoot !== headers[1].stateRoot
-      )
-        throw Error("public checkpoint quorum mismatch");
-      const b = headers[0],
-        p = await ethereum(this.#urls[0], "eth_getProof", [vault, [], tag]);
-      const base = {
-        block_number: number.toString(),
-        block_hash: b.hash,
-        state_root: b.stateRoot,
-        block_timestamp: BigInt(b.timestamp).toString(),
-      };
-      const bundle = to
-        ? {
-            ...base,
-            vault_account_proof: p.accountProof,
-            beneficiary_account_proof: (
-              await ethereum(this.#urls[0], "eth_getProof", [to, [], tag])
-            ).accountProof,
-          }
-        : { ...base, account_proof: p.accountProof };
-      captured = {
-        vault,
-        bundle,
-        ...(!to ? { balanceWei: BigInt(p.balance).toString() } : {}),
-      };
       await writeFile(file, JSON.stringify(captured), { mode: 0o600 });
     }
-    const finals = await Promise.all(
-      this.#urls.map((u) =>
-        ethereum(u, "eth_getBlockByNumber", ["finalized", false]),
-      ),
-    );
-    if (
-      finals.some(
-        (b) => BigInt(b.number) < BigInt(captured.bundle.block_number),
-      )
-    ) {
-      this.waiting = `Captured block ${captured.bundle.block_number}; awaiting both fixed providers finalized coverage before wallet request`;
+    const number = BigInt(captured.bundle.block_number);
+    const finals = await readHeads("finalized");
+    if (finals.some((b) => quantity(b.number) < number)) {
+      this.waiting = `Captured block ${number}; awaiting both fixed providers finalized coverage before wallet request`;
       throw Error(this.waiting);
     }
-    // Recheck canonical header immediately before asking the wallet to create the job.
-    const tag = `0x${BigInt(captured.bundle.block_number).toString(16)}`;
-    const headers = await Promise.all(
-      this.#urls.map((u) => ethereum(u, "eth_getBlockByNumber", [tag, false])),
-    );
+    // Recheck exact height, root and age immediately before wallet creation.
+    const b = await readCanonical(number);
     if (
-      headers.some(
-        (b) =>
-          b.hash !== captured.bundle.block_hash ||
-          b.stateRoot !== captured.bundle.state_root,
-      )
+      b.hash !== captured.bundle.block_hash ||
+      b.stateRoot !== captured.bundle.state_root ||
+      quantity(b.timestamp).toString() !== captured.bundle.block_timestamp
     )
       throw Error("captured public checkpoint no longer canonical");
+    if (!fresh(quantity(b.timestamp)))
+      throw Error("public checkpoint expired before wallet request");
     this.waiting = "";
     return captured.bundle;
   }
@@ -499,9 +586,15 @@ export class PublicCoordinator {
             if (!m.vault) throw Error("derive vault first");
             walletActions = [
               this.wallet("request_proof", {
-                bundle: await this.bundle(m.vault, undefined, "0", 0n, {
-                  terms: m.terms,
-                  liveBalance: state.ethereum?.vaultBalanceWei,
+                bundle: await this.bundle({
+                  vault: m.vault,
+                  cacheNonce: "0",
+                  expectedNonce: "0",
+                  purpose: "collateral",
+                  collateral: {
+                    terms: m.terms,
+                    liveBalance: state.ethereum?.vaultBalanceWei,
+                  },
                 }),
               }),
             ];
@@ -547,7 +640,14 @@ export class PublicCoordinator {
                 throw Error("current fee exceeds immutable cap");
               walletActions = [
                 this.wallet("prepare_settlement", {
-                  bundle: await this.bundle(m.vault, to, s.expected_nonce),
+                  bundle: await this.bundle({
+                    vault: m.vault,
+                    to,
+                    cacheNonce: s.expected_nonce,
+                    expectedNonce: s.expected_nonce,
+                    purpose: "prepare",
+                    minimumBlock: BigInt(s.checkpoint_block_number ?? "0"),
+                  }),
                   gas_price: fee.toString(),
                 }),
               ];
@@ -598,12 +698,19 @@ export class PublicCoordinator {
               this.wallet("confirm_settlement", {
                 candidate_hash: receipt.transactionHash,
                 bundle: {
-                  checkpoint: await this.bundle(
-                    m.vault!,
-                    s.current_intent.transfer.to,
-                    s.current_intent.transfer.nonce,
-                    BigInt(receipt.blockNumber),
-                  ),
+                  checkpoint: await this.bundle({
+                    vault: m.vault!,
+                    to: s.current_intent.transfer.to,
+                    cacheNonce: s.current_intent.transfer.nonce,
+                    expectedNonce: (
+                      BigInt(s.current_intent.transfer.nonce) + 1n
+                    ).toString(),
+                    purpose: "confirm",
+                    minimumBlock: [
+                      BigInt(receipt.blockNumber),
+                      BigInt(s.current_intent.minimum_block_number),
+                    ].reduce((a, b) => (a > b ? a : b)),
+                  }),
                   transaction_index: BigInt(
                     receipt.transactionIndex,
                   ).toString(),
