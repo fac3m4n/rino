@@ -8,6 +8,7 @@ import {
   Journal,
   verifyRelay,
   guardRequest,
+  guardTransport,
   SerialQueue,
 } from "../src/safety.ts";
 async function fixture(chainId = 11155111) {
@@ -213,4 +214,25 @@ it("reconciles an included fifth equivalent packet with four occupied relay slot
       async () => null,
     ),
   ).rejects.toThrow("payload");
+});
+
+it("guards metadata transport without applying the legacy financial action parser", () => {
+  const input = {
+    host: "127.0.0.1:3000",
+    origin: "http://127.0.0.1:3000",
+    contentType: "application/json",
+    csrf: "token",
+    expectedOrigin: "http://127.0.0.1:3000",
+    expectedCsrf: "token",
+    body: { step: 0, event: "submission-started" },
+  };
+  expect(() => guardTransport(input)).not.toThrow();
+  expect(() => guardRequest(input)).toThrow();
+  for (const patch of [
+    { host: "evil.test" },
+    { origin: "https://evil.test" },
+    { contentType: "text/plain" },
+    { csrf: "wrong" },
+  ])
+    expect(() => guardTransport({ ...input, ...patch })).toThrow();
 });

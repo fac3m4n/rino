@@ -180,7 +180,7 @@ export function parseAction(body: unknown): ActionRequest {
     throw Error("action/role/argument not allowed");
   return b as unknown as ActionRequest;
 }
-export function guardRequest(i: {
+export function guardTransport(i: {
   host: string;
   origin: string;
   contentType: string;
@@ -200,6 +200,9 @@ export function guardRequest(i: {
     b = Buffer.from(i.expectedCsrf);
   if (a.length !== b.length || !timingSafeEqual(a, b))
     throw Error("CSRF denied");
+}
+export function guardRequest(i: Parameters<typeof guardTransport>[0]): void {
+  guardTransport(i);
   parseAction(i.body);
 }
 export class SerialQueue {

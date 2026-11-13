@@ -1,3 +1,6 @@
+export type * from "./operations-api.ts";
+export { DIAGNOSTIC_NAMES, DIAGNOSTIC_CODES } from "./operations-api.ts";
+import type { OperationView } from "./operations-api.ts";
 /** Browser-safe API v1. Amounts, times, gas and nonces are decimal strings. */
 export const API_VERSION = 1 as const;
 export type Role = "borrower" | "lender";
@@ -126,6 +129,7 @@ export interface Settlement {
   retired: boolean;
 }
 export interface Config {
+  capabilities?: { operations: true };
   apiVersion: 1;
   mode: "local" | "public";
   ready: boolean;
@@ -178,6 +182,7 @@ export interface State {
   pendingReason: string;
 }
 export interface ActionResult {
+  operation?: OperationView;
   ok: boolean;
   message: string;
   state: State;
