@@ -50,6 +50,8 @@ import {
 } from "./operation-client";
 import { OperationPanel } from "./OperationPanel";
 import { Brand } from "./Brand";
+import { FeedbackToast } from "./FeedbackToast";
+import { phaseTitle, type FeedbackNotice, type UiPhase } from "./feedback";
 import { ThemeToggle } from "./ThemeToggle";
 import { ActivityTable } from "./ActivityTable";
 import { TransactionLink } from "./TransactionLink";
@@ -112,6 +114,11 @@ export default function App() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState<ActionName | "wallet" | null>(null);
+  const [uiPhase, setUiPhase] = useState<UiPhase | null>(null);
+  const [uiEvent, setUiEvent] = useState(0);
+  const uiGeneration = useRef(0);
+  const [connectionNotice, setConnectionNotice] = useState("");
+  const [dismissedNotice, setDismissedNotice] = useState<string | null>(null);
   const [drawer, setDrawer] = useState(false);
   const [details, setDetails] = useState(false);
   const drawerRef = useRef<HTMLElement>(null);
@@ -333,6 +340,9 @@ export default function App() {
   const reconcile = async () => {
     const lane = snapshots.current;
     if (!lane || pending) return;
+    const uiToken = ++uiGeneration.current;
+    setUiEvent(uiToken);
+    setUiPhase("reconciling");
     setRefreshing(true);
     try {
       await lane.refresh({ fresh: true });
@@ -348,7 +358,10 @@ export default function App() {
             : "Unable to refresh chain state.",
         );
     } finally {
-      if (snapshots.current === lane) setRefreshing(false);
+      if (snapshots.current === lane) {
+        setRefreshing(false);
+        if (uiGeneration.current === uiToken) setUiPhase(null);
+      }
     }
   };
   const continueFromCheckedState = () => {
@@ -367,6 +380,10 @@ export default function App() {
   };
   const operationTask = async (task: () => Promise<void>) => {
     if (inflight.current) return;
+    const lane = snapshots.current;
+    const uiToken = ++uiGeneration.current;
+    setUiEvent(uiToken);
+    setUiPhase("checking-state");
     inflight.current = true;
     setRefreshing(true);
     poller.current?.changed();
@@ -381,6 +398,8 @@ export default function App() {
       inflight.current = false;
       setRefreshing(false);
       poller.current?.changed();
+      if (snapshots.current === lane && uiGeneration.current === uiToken)
+        setUiPhase(null);
     }
   };
   const run = async (action: ActionName) => {
@@ -394,11 +413,19 @@ export default function App() {
     let before = latest.current ?? { config, state, receipts };
     let tracked = false;
     const token = lane.invalidate();
+    const uiToken = ++uiGeneration.current;
+    setUiEvent(uiToken);
+    const showPhase = (phase: UiPhase | null) => {
+      if (lane.isCurrent(token) && uiGeneration.current === uiToken)
+        setUiPhase(phase);
+    };
+    showPhase("checking-state");
     inflight.current = true;
     poller.current?.changed();
     setPending(action);
     setError("");
     setMessage("");
+    setConnectionNotice("");
     try {
       await lane.refresh({ fresh: true });
       if (!lane.isCurrent(token)) return;
@@ -423,6 +450,7 @@ export default function App() {
           );
         tracked = true;
         const client = operationClient.current;
+        showPhase("preparing");
         const result = await client.create(
           action,
           role,
@@ -455,6 +483,7 @@ export default function App() {
             throw Error(
               "Prepared funding intent does not match the current wallet and collateral requirement.",
             );
+          showPhase("wallet");
           await client.wallet(result.operation, (progress) =>
             wallets.fundEvm(
               config,
@@ -465,6 +494,7 @@ export default function App() {
             ),
           );
         } else if (result.walletActions?.length) {
+          showPhase("wallet");
           await client.wallet(result.operation, (progress) =>
             wallets.sendNear(
               config,
@@ -477,15 +507,14 @@ export default function App() {
           );
         }
         if (lane.isCurrent(token))
-          setMessage(
-            "Operation recorded. Wallet observations are hints until its exact transaction is independently verified. Current loan state is shown separately.",
-          );
+          setMessage("Operation recorded. Check Activity for confirmation.");
       } else if (
         config.mode === "public" &&
         action === "fund" &&
         role === "borrower"
       ) {
         if (!market?.vault) throw new Error("The vault has not been derived.");
+        showPhase("wallet");
         const hash = await wallets.fundEvm(
           config,
           market.vault as Address,
@@ -496,9 +525,11 @@ export default function App() {
             `Ethereum funding included: ${hash}. Authenticate collateral before borrowing.`,
           );
       } else {
+        showPhase("preparing");
         const result = await submitAction(config, action, role);
         if (!lane.isCurrent(token)) return;
         if (result.walletActions?.length) {
+          showPhase("wallet");
           await wallets.sendNear(
             config,
             result.walletActions,
@@ -539,6 +570,7 @@ export default function App() {
       }
     } finally {
       if (lane.isCurrent(token)) {
+        showPhase("reconciling");
         try {
           await refresh({ fresh: true });
         } catch (error) {
@@ -558,6 +590,7 @@ export default function App() {
             inflight.current = false;
             poller.current?.changed();
             setPending(null);
+            showPhase(null);
           }
         }
       }
@@ -567,6 +600,11 @@ export default function App() {
     chain: "near" | "disconnect-near" | "ethereum" | "switch",
   ) => {
     if (!config || inflight.current) return;
+    const lane = snapshots.current;
+    const uiToken = ++uiGeneration.current;
+    setUiEvent(uiToken);
+    setUiPhase("wallet");
+    setConnectionNotice("");
     inflight.current = true;
     poller.current?.changed();
     setPending("wallet");
@@ -576,12 +614,20 @@ export default function App() {
       else if (chain === "disconnect-near") await wallets.disconnectNear();
       else if (chain === "switch") await wallets.switchEvm();
       else await wallets.connectEvm();
+      if (snapshots.current === lane && uiGeneration.current === uiToken)
+        setConnectionNotice(
+          chain === "disconnect-near"
+            ? "Wallet disconnected"
+            : "Wallet connection updated",
+        );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Wallet connection failed.");
     } finally {
       inflight.current = false;
       poller.current?.changed();
       setPending(null);
+      if (snapshots.current === lane && uiGeneration.current === uiToken)
+        setUiPhase(null);
     }
   };
   let primary: ActionName = "initialize";
@@ -641,6 +687,64 @@ export default function App() {
         "Sign the fixed transfer, relay it to Ethereum, then authenticate its receipt on NEAR.";
     }
   }
+  if (!config || !state) {
+    stageTitle = "Loading credit line";
+    stageCopy =
+      "Connecting to the coordinator for current position and network information.";
+  }
+  const latestOperation = [...operations]
+    .reverse()
+    .find((op) => !op.historical);
+  const operationNotice =
+    latestOperation &&
+    (latestOperation.stage === "failed" ||
+      latestOperation.unresolved ||
+      latestOperation.stage === "partial")
+      ? latestOperation
+      : undefined;
+  const notice: FeedbackNotice | null = error
+    ? {
+        id: `error:${uiEvent}:${error}`,
+        kind: uncertain ? "uncertain" : "error",
+        title: uncertain ? "Outcome uncertain" : "Request needs attention",
+        detail: error,
+      }
+    : uncertain || networkPaused
+      ? {
+          id: `uncertain:${uiEvent}`,
+          kind: "uncertain",
+          title: "Current outcome needs checking",
+          detail:
+            "Use the persistent recovery notice before another financial action.",
+        }
+      : uiPhase
+        ? {
+            id: `phase:${uiEvent}:${uiPhase}`,
+            kind: "pending",
+            title: phaseTitle[uiPhase],
+            detail:
+              uiPhase === "reconciling" && message
+                ? message
+                : "Financial controls stay paused while this request is in progress.",
+          }
+        : operationNotice
+          ? {
+              id: `operation:${operationNotice.id}:${operationNotice.stage}`,
+              kind: operationNotice.stage === "failed" ? "error" : "uncertain",
+              title:
+                operationNotice.stage === "failed"
+                  ? "Operation unsuccessful"
+                  : "Checking transaction",
+              detail:
+                "Review exact transaction evidence in operation recovery. Current loan state is shown separately.",
+            }
+          : message || connectionNotice
+            ? {
+                id: `info:${uiEvent}:${message || connectionNotice}`,
+                kind: "info",
+                title: connectionNotice || message,
+              }
+            : null;
   const history = loanHistory(state);
   const funded = fundingHistory(state);
   const steps = [
@@ -700,19 +804,21 @@ export default function App() {
         onClick={() => void run(action)}
       >
         {pending === action ? <RefreshCw size={16} className="spin" /> : null}
-        {pending === action
-          ? "Waiting for receipts…"
-          : action === "fund" && role === "lender"
-            ? local
-              ? "Fund offer + vault"
-              : "Fund CREDIT offer"
-            : action === "fund"
-              ? `Fund vault · ${eth(fundingShortfall)} ETH`
-              : action === "borrow"
-                ? `Borrow ${credit(market?.terms.principal_units)} CREDIT`
-                : action === "repay"
-                  ? `Repay ${credit(market?.terms.debt_units)} CREDIT`
-                  : actionNames[action]}
+        {!config || !state
+          ? "Loading credit line…"
+          : pending === action
+            ? "Waiting for receipts…"
+            : action === "fund" && role === "lender"
+              ? local
+                ? "Fund offer + vault"
+                : "Fund CREDIT offer"
+              : action === "fund"
+                ? `Fund vault · ${eth(fundingShortfall)} ETH`
+                : action === "borrow"
+                  ? `Borrow ${credit(market?.terms.principal_units)} CREDIT`
+                  : action === "repay"
+                    ? `Repay ${credit(market?.terms.debt_units)} CREDIT`
+                    : actionNames[action]}
         {!secondary && pending !== action ? <ArrowRight size={17} /> : null}
       </button>
     );
@@ -750,11 +856,23 @@ export default function App() {
               <p>Borrow on NEAR. Keep your collateral on Ethereum.</p>
             </div>
             <div className="network-label">
-              {local ? "Local Ethereum" : "Sepolia"}
-              <span aria-hidden="true">→</span>NEAR{" "}
-              {local ? "Sandbox" : "testnet"}
+              {!config ? (
+                "Connecting networks"
+              ) : (
+                <>
+                  {local ? "Local Ethereum" : "Sepolia"}
+                  <span aria-hidden="true">→</span>NEAR{" "}
+                  {local ? "Sandbox" : "testnet"}
+                </>
+              )}
             </div>
           </section>
+          {(!config || !state) && (
+            <div className="notice loading-position" role="status">
+              <RefreshCw size={16} className="spin" aria-hidden="true" />
+              Loading current position…
+            </div>
+          )}
           {config && !config.ready && (
             <section role="alert" className="notice error">
               <b>Environment is not ready</b>
@@ -768,9 +886,6 @@ export default function App() {
           {error && (
             <div className="notice error" role="alert">
               <span>{error}</span>
-              <button aria-label="Dismiss error" onClick={() => setError("")}>
-                <X size={16} />
-              </button>
             </div>
           )}
           {(uncertain || networkPaused) && (
@@ -805,25 +920,29 @@ export default function App() {
               )}
             </div>
           )}
-          {message && (
-            <div className="notice" role="status">
-              {message}
-            </div>
-          )}
+          <FeedbackToast
+            notice={notice?.id === dismissedNotice ? null : notice}
+            onDismiss={() => setDismissedNotice(notice?.id ?? null)}
+          />
           <div className="dashboard-grid">
             <div className="overview">
-              <div className="asset-cards">
+              <div
+                className={`asset-cards ${!state ? "position-loading" : ""}`}
+                aria-busy={!state}
+              >
                 <section className="asset-card">
                   <h2>ETH collateral</h2>
                   <div className="asset-balance" data-testid="vault-balance">
                     {eth(state?.ethereum?.vaultBalanceWei)} <span>ETH</span>
                   </div>
                   <p>
-                    {settlement?.retired
-                      ? "Vault retired"
-                      : market?.proof_fresh
-                        ? "Collateral authenticated"
-                        : "Awaiting fresh collateral proof"}
+                    {!state
+                      ? "Loading collateral state"
+                      : settlement?.retired
+                        ? "Vault retired"
+                        : market?.proof_fresh
+                          ? "Collateral authenticated"
+                          : "Awaiting fresh collateral proof"}
                   </p>
                 </section>
                 <section className="asset-card">
@@ -853,7 +972,13 @@ export default function App() {
                     <span>CREDIT</span>
                   </div>
                   <p>
-                    Configured {role} · NEAR {local ? "Sandbox" : "testnet"}
+                    {!config ? (
+                      "Connecting wallet network"
+                    ) : (
+                      <>
+                        Configured {role} · NEAR {local ? "Sandbox" : "testnet"}
+                      </>
+                    )}
                   </p>
                 </section>
               </div>
@@ -873,7 +998,7 @@ export default function App() {
                     <p>Ethereum collateral · NEAR liquidity</p>
                   </div>
                   <span className="phase-badge">
-                    {market?.phase ?? "Uninitialized"}
+                    {market?.phase ?? (!state ? "Loading…" : "Uninitialized")}
                   </span>
                 </div>
                 <div className="terms-grid">
@@ -975,7 +1100,7 @@ export default function App() {
               <div className="action-body">
                 <div className="stage-kicker">
                   <span className="status-dot live" />
-                  {market?.phase ?? "NEW CREDIT LINE"}
+                  {market?.phase ?? (!state ? "CONNECTING" : "NEW CREDIT LINE")}
                 </div>
                 <h2>{stageTitle}</h2>
                 <p>{stageCopy}</p>
@@ -1025,9 +1150,11 @@ export default function App() {
                 <div className="authority-note">
                   <Fingerprint size={14} />
                   <span>
-                    {local
-                      ? `Local ${role} actor · real chain transactions`
-                      : "Your connected wallet signs every financial action"}
+                    {!config
+                      ? "Connecting signing environment"
+                      : local
+                        ? `Local ${role} actor · real chain transactions`
+                        : "Your connected wallet signs every financial action"}
                   </span>
                 </div>
                 {(pending ||
@@ -1038,7 +1165,9 @@ export default function App() {
                     <Clock3 size={16} />
                     <span>
                       {pending
-                        ? "Transaction in progress. Waiting for actual receipts."
+                        ? uiPhase
+                          ? phaseTitle[uiPhase]
+                          : "Transaction in progress. Waiting for actual receipts."
                         : state?.pendingReason || settlement?.pending_reason}
                     </span>
                   </div>
@@ -1283,15 +1412,26 @@ export default function App() {
             >
               <div>
                 <span className="small-network">E</span>
-                <b>{local ? "Ethereum · local Anvil" : "Ethereum · Sepolia"}</b>
+                <b>
+                  {!config
+                    ? "Ethereum · connecting"
+                    : local
+                      ? "Ethereum · local Anvil"
+                      : "Ethereum · Sepolia"}
+                </b>
                 <span className="cross-arrow">↔</span>
                 <NearMark />
-                <b>NEAR · {local ? "Sandbox" : "testnet"}</b>
+                <b>
+                  NEAR ·{" "}
+                  {!config ? "connecting" : local ? "Sandbox" : "testnet"}
+                </b>
               </div>
               <span className="authority-summary">
-                {local
-                  ? "Mock MPC / executor · synthetic RPC"
-                  : "User wallet authority · public testnets"}
+                {!config
+                  ? "Connecting authority information"
+                  : local
+                    ? "Mock MPC / executor · synthetic RPC"
+                    : "User wallet authority · public testnets"}
               </span>
               <button onClick={() => setDetails(!details)}>
                 Trust & environment <ChevronDown size={14} />
@@ -1301,9 +1441,11 @@ export default function App() {
               <section className="trust-panel">
                 <h2>Know what verifies this demo</h2>
                 <p>
-                  {local
-                    ? "Local actors hold development keys. Two synthetic RPC routes share one owned Anvil; mock MPC and executor services are trusted. The controller and real worker execute against local chains."
-                    : "Connected users authorize financial actions. Public testnet readiness must pass before any action is available."}
+                  {!config
+                    ? "Connecting to the coordinator for environment and authority details."
+                    : local
+                      ? "Local actors hold development keys. Two synthetic RPC routes share one owned Anvil; mock MPC and executor services are trusted. The controller and real worker execute against local chains."
+                      : "Connected users authorize financial actions. Public testnet readiness must pass before any action is available."}
                 </p>
                 <p>
                   Receipt data relies on the declared two-RPC policy. This is
@@ -1407,7 +1549,9 @@ export default function App() {
               </div>
               <div>
                 <dt>Loan phase</dt>
-                <dd>{market?.phase ?? "Uninitialized"}</dd>
+                <dd>
+                  {market?.phase ?? (!state ? "Loading…" : "Uninitialized")}
+                </dd>
               </div>
               <div>
                 <dt>Proof status</dt>
