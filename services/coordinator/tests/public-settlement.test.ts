@@ -65,13 +65,21 @@ async function fixture() {
   } as unknown as State;
   let candidate: SignedTransaction | null = null;
   const nonces = new Map<bigint, bigint>();
+  const baseFees = new Map<bigint, bigint>();
+  let quoteBaseFees = [1n, 1n];
+  let intercept:
+    | ((
+        call: { provider: number; method: string; params: any[] },
+        result: any,
+      ) => any)
+    | undefined;
   const calls: Array<{ provider: number; method: string; params: any[] }> = [];
   const header = (number: bigint) => ({
     number: `0x${number.toString(16)}`,
     hash: `0x${number.toString(16).padStart(64, "0")}`,
     stateRoot: `0x${(number + 1000n).toString(16).padStart(64, "0")}`,
     timestamp: `0x${(now - 30n).toString(16)}`,
-    baseFeePerGas: "0x1",
+    baseFeePerGas: `0x${(baseFees.get(number) ?? 1n).toString(16)}`,
   });
   vi.spyOn(adapter, "state").mockImplementation(async () => state);
   vi.spyOn(adapter, "view").mockImplementation(async (method: string) => {
@@ -112,6 +120,14 @@ async function fixture() {
         transactionIndex: "0x0",
       };
     else throw Error(`unexpected public RPC ${q.method}`);
+    if (q.method === "eth_getBlockByNumber" && q.params[0] === "latest")
+      (result as any).baseFeePerGas =
+        `0x${quoteBaseFees[provider].toString(16)}`;
+    if (intercept)
+      result = intercept(
+        { provider, method: q.method, params: q.params },
+        result,
+      );
     return new Response(JSON.stringify({ jsonrpc: "2.0", id: q.id, result }));
   });
   async function issue(nonce: number) {
@@ -157,6 +173,13 @@ async function fixture() {
     calls,
     state,
     nonces,
+    baseFees,
+    setQuoteBaseFees: (fees: bigint[]) => {
+      quoteBaseFees = fees;
+    },
+    intercept: (fn: typeof intercept) => {
+      intercept = fn;
+    },
     issue,
     setHeads: (l: bigint[], f: bigint[]) => {
       latest = l;
@@ -327,4 +350,144 @@ it("confirmation refuses both finalized and latest state with a pre-transaction 
     f.adapter.action({ action: "settle", role: "borrower" }),
   ).rejects.toThrow("nonce");
   expect(f.calls.filter((c) => c.method === "eth_getProof")).toHaveLength(2);
+});
+
+// These cases catch preparations that the controller would reject because the
+// authenticated checkpoint base fee exceeds the independently quoted gas price.
+it("skips finalized base fee 100 under quote 2 and retains the affordable recent checkpoint", async () => {
+  const f = await fixture();
+  f.baseFees.set(100n, 100n);
+  f.setHeads([103n, 102n], [101n, 100n]);
+  await expect(
+    f.adapter.action({ action: "settle", role: "borrower" }),
+  ).rejects.toThrow("Captured block 102");
+  expect(
+    f.calls.filter((c) => c.method === "eth_getProof").map((c) => c.params[2]),
+  ).toEqual(["0x66", "0x66"]);
+  expect(f.calls.length - 2).toBeLessThanOrEqual(15);
+  f.calls.length = 0;
+  f.setHeads([110n, 109n], [104n, 102n]);
+  f.setQuoteBaseFees([2n, 1n]);
+  const result = await f.adapter.action({ action: "settle", role: "borrower" });
+  expect(result.walletActions![0].args.gas_price).toBe("4");
+  expect((result.walletActions![0].args.bundle as any).block_number).toBe(
+    "102",
+  );
+  expect(f.calls.length - 2).toBe(4);
+  expect(f.calls.some((c) => c.method === "eth_getProof")).toBe(false);
+});
+it("invalidates a previously affordable cached fee floor when the quote falls", async () => {
+  const f = await fixture();
+  f.baseFees.set(100n, 100n);
+  f.setQuoteBaseFees([100n, 100n]);
+  const first = await f.adapter.action({ action: "settle", role: "borrower" });
+  expect(first.walletActions![0].args.gas_price).toBe("200");
+  expect((first.walletActions![0].args.bundle as any).block_number).toBe("100");
+  f.setQuoteBaseFees([1n, 1n]);
+  f.setHeads([103n, 102n], [101n, 100n]);
+  f.calls.length = 0;
+  await expect(
+    f.adapter.action({ action: "settle", role: "borrower" }),
+  ).rejects.toThrow("Captured block 102");
+  expect(
+    JSON.parse(await readFile(f.cache("0"), "utf8")).bundle.block_number,
+  ).toBe("102");
+  expect(
+    f.calls.filter((c) => c.method === "eth_getProof").map((c) => c.params[2]),
+  ).toEqual(["0x66", "0x66"]);
+});
+it("accepts checkpoint base fee equal to the quote without leaking fee metadata into the bundle", async () => {
+  const f = await fixture();
+  f.baseFees.set(100n, 2n);
+  const result = await f.adapter.action({ action: "settle", role: "borrower" });
+  expect(result.walletActions![0].args.gas_price).toBe("2");
+  expect(
+    Object.keys(result.walletActions![0].args.bundle as object).sort(),
+  ).toEqual([
+    "beneficiary_account_proof",
+    "block_hash",
+    "block_number",
+    "block_timestamp",
+    "state_root",
+    "vault_account_proof",
+  ]);
+  expect(f.calls.length - 2).toBe(10);
+});
+it("rejects finalized and recent checkpoints above quote without witnesses or unsuitable cache", async () => {
+  const f = await fixture();
+  f.baseFees.set(100n, 100n);
+  f.baseFees.set(102n, 3n);
+  f.setHeads([103n, 102n], [101n, 100n]);
+  await expect(
+    f.adapter.action({ action: "settle", role: "borrower" }),
+  ).rejects.toThrow("base fee");
+  expect(f.calls.some((c) => c.method === "eth_getProof")).toBe(false);
+  expect(
+    (await readdir(f.adapter.directory)).some((p) => p.startsWith("capture-")),
+  ).toBe(false);
+  expect(f.calls.length - 2).toBe(8);
+});
+it("rebuilds unknown legacy preparation fee metadata once", async () => {
+  const f = await fixture();
+  await f.adapter.action({ action: "settle", role: "borrower" });
+  const old = JSON.parse(await readFile(f.cache("0"), "utf8"));
+  delete old.checkpointBaseFeeWei;
+  await writeFile(f.cache("0"), JSON.stringify(old));
+  f.calls.length = 0;
+  await f.adapter.action({ action: "settle", role: "borrower" });
+  expect(f.calls.filter((c) => c.method === "eth_getProof")).toHaveLength(2);
+  f.calls.length = 0;
+  await f.adapter.action({ action: "settle", role: "borrower" });
+  expect(f.calls.length - 2).toBe(4);
+});
+it.each([
+  "missing",
+  "malformed",
+  "disagree",
+  "recheck-missing",
+  "recheck-disagree",
+  "recheck-changed",
+])(
+  "rejects %s canonical preparation fees without a selection retry",
+  async (fault) => {
+    const f = await fixture();
+    let numeric = 0;
+    f.intercept((call, result) => {
+      if (call.method !== "eth_getBlockByNumber" || call.params[0] !== "0x64")
+        return result;
+      numeric++;
+      const recheck = fault.startsWith("recheck-");
+      if (recheck && numeric <= 2) return result;
+      if (fault === "recheck-changed")
+        return { ...result, baseFeePerGas: "0x2" };
+      if (call.provider === 0) return result;
+      if (fault.endsWith("missing")) {
+        const { baseFeePerGas, ...rest } = result;
+        return rest;
+      }
+      if (fault === "malformed") return { ...result, baseFeePerGas: "0xno" };
+      return { ...result, baseFeePerGas: "0x2" };
+    });
+    await expect(
+      f.adapter.action({ action: "settle", role: "borrower" }),
+    ).rejects.toThrow();
+    expect(
+      f.calls.filter(
+        (c) => c.method === "eth_getBlockByNumber" && c.params[0] === "latest",
+      ),
+    ).toHaveLength(2);
+    expect(f.calls.length - 2).toBeLessThanOrEqual(10);
+  },
+);
+it("preserves twice the maximum latest base fee and the immutable quote cap", async () => {
+  const f = await fixture();
+  f.setQuoteBaseFees([3n, 7n]);
+  const result = await f.adapter.action({ action: "settle", role: "borrower" });
+  expect(result.walletActions![0].args.gas_price).toBe("14");
+  f.calls.length = 0;
+  f.state.market!.terms.fee_cap_wei_per_gas = "13";
+  await expect(
+    f.adapter.action({ action: "settle", role: "borrower" }),
+  ).rejects.toThrow("immutable cap");
+  expect(f.calls).toHaveLength(2);
 });

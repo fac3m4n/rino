@@ -361,11 +361,22 @@ export class PublicCoordinator {
     expectedNonce: string;
     purpose: "collateral" | "prepare" | "confirm";
     minimumBlock?: bigint;
+    maximumCheckpointBaseFee?: bigint;
     collateral?: { terms: Terms; liveBalance: unknown };
   }): Promise<any> {
     const { vault, to, cacheNonce, expectedNonce, purpose, collateral } =
       options;
     const minimumBlock = options.minimumBlock ?? 0n;
+    const maximumBaseFee =
+      purpose === "prepare" ? options.maximumCheckpointBaseFee : undefined;
+    if (purpose === "prepare" && maximumBaseFee === undefined)
+      throw Error("preparation checkpoint fee bound required");
+    const affordableFee = (value: unknown) =>
+      maximumBaseFee === undefined ||
+      (typeof value === "string" &&
+        value.length <= 78 &&
+        /^(0|[1-9][0-9]*)$/.test(value) &&
+        BigInt(value) <= maximumBaseFee);
     const file = resolve(
       this.directory,
       `capture-${to ?? "collateral"}-${cacheNonce}.json`,
@@ -419,6 +430,12 @@ export class PublicCoordinator {
         headers[0].timestamp !== headers[1].timestamp
       )
         throw Error("public checkpoint quorum mismatch");
+      if (
+        maximumBaseFee !== undefined &&
+        quantity(headers[0].baseFeePerGas) !==
+          quantity(headers[1].baseFeePerGas)
+      )
+        throw Error("public checkpoint base fee quorum mismatch");
       return headers[0];
     };
     const fresh = (timestamp: bigint) => {
@@ -461,6 +478,7 @@ export class PublicCoordinator {
         captured.expectedNonce !== expectedNonce ||
         captured.observedNonce !== expectedNonce ||
         BigInt(captured.bundle.block_number) < minimumBlock ||
+        !affordableFee(captured.checkpointBaseFeeWei) ||
         inadequate(captured.balanceWei))
     )
       captured = undefined;
@@ -472,6 +490,15 @@ export class PublicCoordinator {
         const b = await readCanonical(number);
         if (!fresh(quantity(b.timestamp))) {
           unsuitable = "checkpoint is stale";
+          return undefined;
+        }
+        const checkpointBaseFeeWei =
+          maximumBaseFee === undefined
+            ? undefined
+            : quantity(b.baseFeePerGas).toString();
+        if (!affordableFee(checkpointBaseFeeWei)) {
+          unsuitable =
+            "checkpoint base fee exceeds the current preparation quote";
           return undefined;
         }
         const tag = `0x${number.toString(16)}`;
@@ -515,6 +542,7 @@ export class PublicCoordinator {
           purpose,
           expectedNonce,
           observedNonce,
+          ...(maximumBaseFee === undefined ? {} : { checkpointBaseFeeWei }),
           bundle,
           ...(collateral ? { balanceWei } : {}),
         };
@@ -542,6 +570,14 @@ export class PublicCoordinator {
       quantity(b.timestamp).toString() !== captured.bundle.block_timestamp
     )
       throw Error("captured public checkpoint no longer canonical");
+    if (
+      maximumBaseFee !== undefined &&
+      (quantity(b.baseFeePerGas).toString() !== captured.checkpointBaseFeeWei ||
+        !affordableFee(quantity(b.baseFeePerGas).toString()))
+    )
+      throw Error(
+        "captured public checkpoint base fee changed or exceeds preparation quote",
+      );
     if (!fresh(quantity(b.timestamp)))
       throw Error("public checkpoint expired before wallet request");
     this.waiting = "";
@@ -646,6 +682,7 @@ export class PublicCoordinator {
                     cacheNonce: s.expected_nonce,
                     expectedNonce: s.expected_nonce,
                     purpose: "prepare",
+                    maximumCheckpointBaseFee: fee,
                     minimumBlock: BigInt(s.checkpoint_block_number ?? "0"),
                   }),
                   gas_price: fee.toString(),
