@@ -12,6 +12,76 @@ import { ActionFailure, submissionFailure, userRejected } from "./outcomes";
 
 import { WalletSession, type Injected } from "./wallet-session";
 
+export type WalletProgress = (event: {
+  step: number;
+  event: "submission-started" | "hash";
+  hash?: string;
+}) => Promise<void>;
+
+async function acknowledgeStart(
+  progress: WalletProgress | undefined,
+  step: number,
+  hashes: string[],
+) {
+  try {
+    await progress?.({ step, event: "submission-started" });
+  } catch (error) {
+    throw new ActionFailure(
+      "Wallet submission was not started because its progress acknowledgement was unavailable.",
+      hashes.length ? "partial" : "failed",
+      "before-submission",
+      [...hashes],
+      submissionFailure(error, []).diagnostic,
+    );
+  }
+}
+async function acknowledgeHash(
+  progress: WalletProgress | undefined,
+  step: number,
+  hash: string,
+  hashes: string[],
+) {
+  try {
+    await progress?.({ step, event: "hash", hash });
+  } catch (error) {
+    throw new ActionFailure(
+      "Outcome uncertain. A transaction hash was received but its progress acknowledgement was unavailable. Reconcile before resubmitting.",
+      "unknown",
+      "confirmation",
+      [...hashes],
+      submissionFailure(error, []).diagnostic,
+    );
+  }
+}
+
+async function acknowledgeErrorHints(
+  failure: ActionFailure,
+  chain: "near" | "ethereum",
+  step: number,
+  emitted: Set<string>,
+  progress?: WalletProgress,
+) {
+  for (const hash of failure.knownHashes) {
+    if (
+      emitted.has(hash) ||
+      (hash.startsWith("0x") ? "ethereum" : "near") !== chain
+    )
+      continue;
+    emitted.add(hash);
+    try {
+      await acknowledgeHash(progress, step, hash, failure.knownHashes);
+    } catch {
+      throw new ActionFailure(
+        "Outcome uncertain. A wallet error supplied a transaction hash whose progress acknowledgement was unavailable. Reconcile before resubmitting.",
+        "unknown",
+        "confirmation",
+        [...failure.knownHashes],
+        failure.diagnostic,
+      );
+    }
+  }
+}
+
 function injected(): Injected {
   const provider = (window as unknown as { ethereum?: Injected }).ethereum;
   if (!provider)
@@ -74,6 +144,7 @@ export function useWallets(config?: Config) {
       config: Config,
       actions: WalletAction[],
       expectedAccount: string,
+      progress?: WalletProgress,
     ) {
       // Validate the complete batch before the first irreversible wallet action.
       for (const action of actions) {
@@ -118,6 +189,8 @@ export function useWallets(config?: Config) {
             `Meteor account confirmation ${rejected ? "rejected" : "failed"}. No financial transaction was submitted. Select ${expectedAccount} on NEAR testnet and try again.`,
             rejected ? "rejected" : "failed",
             "before-submission",
+            [],
+            submissionFailure(error, []).diagnostic,
           );
         }
         session.selectNear(wallet.manifest.id, selected);
@@ -129,8 +202,10 @@ export function useWallets(config?: Config) {
           );
       }
       const hashes: string[] = [];
-      for (const action of actions) {
+      for (const [step, action] of actions.entries()) {
         const earlier = hashes.length;
+        const emitted = new Set<string>();
+        await acknowledgeStart(progress, step, hashes);
         try {
           const result = await wallet.signAndSendTransaction({
             network: "testnet",
@@ -150,7 +225,11 @@ export function useWallets(config?: Config) {
           });
           const hash =
             result.transaction?.hash ?? result.transaction_outcome?.id;
-          if (hash) hashes.push(hash);
+          if (hash) {
+            hashes.push(hash);
+            emitted.add(hash);
+            await acknowledgeHash(progress, step, hash, hashes);
+          }
           if (meteor && result.transaction?.signer_id !== expectedAccount)
             throw new ActionFailure(
               `Outcome uncertain. Meteor returned transaction signer ${result.transaction?.signer_id || "none"}; expected ${expectedAccount}. Known hashes: ${hashes.join(", ")}. Reconcile chain state and receipts before resubmitting.`,
@@ -185,11 +264,21 @@ export function useWallets(config?: Config) {
               [...hashes],
             );
         } catch (error) {
-          throw submissionFailure(error, hashes);
+          const failure = submissionFailure(error, hashes);
+          // Earlier batch hashes were already attributed to their own steps.
+          for (const hash of hashes) emitted.add(hash);
+          await acknowledgeErrorHints(failure, "near", step, emitted, progress);
+          throw failure;
         }
       }
     },
-    async fundEvm(config: Config, vault: Address, shortfallWei: bigint) {
+    async fundEvm(
+      config: Config,
+      vault: Address,
+      shortfallWei: bigint,
+      progress?: WalletProgress,
+      expectedFrom?: Address,
+    ) {
       if (config.mode !== "public")
         throw new Error("Use the local actor in local mode.");
       const provider = injected();
@@ -201,6 +290,12 @@ export function useWallets(config?: Config) {
         throw new Error("Switch the Ethereum wallet to Sepolia.");
       const [account] = await wallet.getAddresses();
       if (!account) throw new Error("Connect your Ethereum wallet first.");
+      if (expectedFrom && account.toLowerCase() !== expectedFrom.toLowerCase())
+        throw new ActionFailure(
+          "The connected Ethereum account changed after funding preparation. Prepare a new funding intent for the selected account.",
+          "failed",
+          "before-submission",
+        );
       if (
         typeof shortfallWei !== "bigint" ||
         shortfallWei <= 0n ||
@@ -208,6 +303,8 @@ export function useWallets(config?: Config) {
       )
         throw new Error("No valid collateral shortfall to fund.");
       const hashes: string[] = [];
+      const emitted = new Set<string>();
+      await acknowledgeStart(progress, 0, hashes);
       try {
         const hash = await wallet.sendTransaction({
           account,
@@ -216,6 +313,8 @@ export function useWallets(config?: Config) {
           data: "0x",
         });
         hashes.push(hash);
+        emitted.add(hash);
+        await acknowledgeHash(progress, 0, hash, hashes);
         const client = createPublicClient({
           chain: sepolia,
           transport: config.ethereum.rpcUrl
@@ -223,17 +322,38 @@ export function useWallets(config?: Config) {
             : custom(provider),
         });
         let replacementReason: string | undefined;
+        const acknowledgements: Promise<void>[] = [];
         const receipt = await client.waitForTransactionReceipt({
           hash,
           confirmations: 1,
           timeout: 120000,
           onReplaced(replacement) {
             replacementReason = replacement.reason;
-            hashes.push(replacement.transactionReceipt.transactionHash);
+            const replacementHash =
+              replacement.transactionReceipt.transactionHash;
+            if (!hashes.includes(replacementHash)) {
+              hashes.push(replacementHash);
+              emitted.add(replacementHash);
+              const acknowledgement = acknowledgeHash(
+                progress,
+                0,
+                replacementHash,
+                hashes,
+              );
+              // viem's onReplaced hook is synchronous; observe rejection now and
+              // await its acknowledgement before treating confirmation as done.
+              void acknowledgement.catch(() => {});
+              acknowledgements.push(acknowledgement);
+            }
           },
         });
+        await Promise.all(acknowledgements);
         const includedHash = receipt.transactionHash;
-        if (!hashes.includes(includedHash)) hashes.push(includedHash);
+        if (!hashes.includes(includedHash)) {
+          hashes.push(includedHash);
+          emitted.add(includedHash);
+          await acknowledgeHash(progress, 0, includedHash, hashes);
+        }
         if (receipt.status !== "success")
           throw new ActionFailure(
             `Ethereum funding reverted: ${includedHash}`,
@@ -269,10 +389,15 @@ export function useWallets(config?: Config) {
         return includedHash;
       } catch (error) {
         const failure = submissionFailure(error, hashes);
-        if (failure.uncertainMutation && hashes.length)
-          throw new ActionFailure(failure.message, "unknown", "confirmation", [
-            ...hashes,
-          ]);
+        await acknowledgeErrorHints(failure, "ethereum", 0, emitted, progress);
+        if (failure.uncertainMutation && failure.knownHashes.length)
+          throw new ActionFailure(
+            failure.message,
+            "unknown",
+            "confirmation",
+            [...failure.knownHashes],
+            failure.diagnostic,
+          );
         throw failure;
       }
     },

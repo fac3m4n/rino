@@ -378,3 +378,300 @@ it("direct Meteor confirmation persists only the actual selected public account 
   });
   expect(nearFixture.calls).toBe(0);
 });
+
+it("acknowledges each NEAR step before signing and its hash before the next step", async () => {
+  nearFixture.results = [
+    nearSuccess,
+    { ...nearSuccess, transaction: { hash: "confirmed-two" } },
+  ];
+  const events: unknown[] = [];
+  await wallet().sendNear(
+    nearConfig,
+    [nearAction, nearAction],
+    "borrower.test",
+    async (event) => {
+      events.push({
+        ...event,
+        calls: nearFixture.calls,
+        reads: nearFixture.reads.length,
+      });
+    },
+  );
+  expect(events).toEqual([
+    { step: 0, event: "submission-started", calls: 0, reads: 1 },
+    { step: 0, event: "hash", hash: "confirmed-one", calls: 1, reads: 1 },
+    { step: 1, event: "submission-started", calls: 1, reads: 1 },
+    { step: 1, event: "hash", hash: "confirmed-two", calls: 2, reads: 1 },
+  ]);
+});
+
+it("failed NEAR start acknowledgement prevents signing", async () => {
+  await expect(
+    wallet().sendNear(nearConfig, [nearAction], "borrower.test", async () => {
+      throw new Error("metadata unavailable");
+    }),
+  ).rejects.toMatchObject({ stage: "before-submission", knownHashes: [] });
+  expect(nearFixture.calls).toBe(0);
+});
+
+it("failed NEAR hash acknowledgement keeps uncertainty and stops the batch", async () => {
+  nearFixture.results = [nearSuccess, nearSuccess];
+  await expect(
+    wallet().sendNear(
+      nearConfig,
+      [nearAction, nearAction],
+      "borrower.test",
+      async (event) => {
+        if (event.event === "hash")
+          throw Object.assign(new Error("metadata rejected"), { code: 4001 });
+      },
+    ),
+  ).rejects.toMatchObject({
+    outcome: "unknown",
+    stage: "confirmation",
+    knownHashes: ["confirmed-one"],
+  });
+  expect(nearFixture.calls).toBe(1);
+});
+
+it("account confirmation failure never reports financial submission progress", async () => {
+  nearFixture.manifestId = "meteor-wallet";
+  nearFixture.selected = ["lender.test"];
+  const events: unknown[] = [];
+  await expect(
+    wallet().sendNear(
+      nearConfig,
+      [nearAction],
+      "borrower.test",
+      async (event) => {
+        events.push(event);
+      },
+    ),
+  ).rejects.toMatchObject({ stage: "before-submission" });
+  expect(events).toEqual([]);
+});
+
+it("checks the fresh Ethereum sender against the frozen intent before submission progress", async () => {
+  const f = fixture("success");
+  const events: unknown[] = [];
+  await expect(
+    wallet().fundEvm(
+      config,
+      vault,
+      120000000000000000n,
+      async (event) => {
+        events.push(event);
+      },
+      "0x2222222222222222222222222222222222222222",
+    ),
+  ).rejects.toMatchObject({ stage: "before-submission" });
+  expect(events).toEqual([]);
+  expect(f.sends).toBe(0);
+  expect(f.requests).toEqual(["eth_chainId", "eth_accounts"]);
+});
+
+it("failed Ethereum start acknowledgement prevents transfer", async () => {
+  const f = fixture("success");
+  await expect(
+    wallet().fundEvm(config, vault, 120000000000000000n, async () => {
+      throw new Error("metadata unavailable");
+    }),
+  ).rejects.toMatchObject({ stage: "before-submission", knownHashes: [] });
+  expect(f.sends).toBe(0);
+});
+
+it("reports the funding hash before checking its receipt and preserves failed acknowledgement ambiguity", async () => {
+  const f = fixture("success");
+  const events: unknown[] = [];
+  await expect(
+    wallet().fundEvm(config, vault, 120000000000000000n, async (event) => {
+      events.push({
+        ...event,
+        sends: f.sends,
+        receiptRequested: f.requests.includes("eth_getTransactionReceipt"),
+      });
+      if (event.event === "hash")
+        throw Object.assign(new Error("metadata rejected"), { code: 4001 });
+    }),
+  ).rejects.toMatchObject({
+    outcome: "unknown",
+    stage: "confirmation",
+    knownHashes: [f.original],
+  });
+  expect(events).toEqual([
+    { step: 0, event: "submission-started", sends: 0, receiptRequested: false },
+    {
+      step: 0,
+      event: "hash",
+      hash: f.original,
+      sends: 1,
+      receiptRequested: false,
+    },
+  ]);
+  expect(f.sends).toBe(1);
+});
+
+it("reports a replacement hash while retaining exact included-transfer verification", async () => {
+  const f = fixture("speedup");
+  const events: unknown[] = [];
+  expect(
+    await wallet().fundEvm(
+      config,
+      vault,
+      120000000000000000n,
+      async (event) => {
+        events.push(event);
+      },
+      "0x1111111111111111111111111111111111111111",
+    ),
+  ).toBe(f.replacement);
+  expect(events).toEqual([
+    { step: 0, event: "submission-started" },
+    { step: 0, event: "hash", hash: f.original },
+    { step: 0, event: "hash", hash: f.replacement },
+  ]);
+});
+
+it("failed later NEAR start acknowledgement preserves earlier effects without a second prompt", async () => {
+  nearFixture.results = [nearSuccess, nearSuccess];
+  await expect(
+    wallet().sendNear(
+      nearConfig,
+      [nearAction, nearAction],
+      "borrower.test",
+      async (event) => {
+        if (event.step === 1) throw new Error("metadata unavailable");
+      },
+    ),
+  ).rejects.toMatchObject({
+    outcome: "partial",
+    stage: "before-submission",
+    uncertainMutation: true,
+    knownHashes: ["confirmed-one"],
+  });
+  expect(nearFixture.calls).toBe(1);
+});
+
+it("failed replacement hash acknowledgement cannot declare confirmed funding", async () => {
+  const f = fixture("speedup");
+  await expect(
+    wallet().fundEvm(config, vault, 120000000000000000n, async (event) => {
+      if (event.hash === f.replacement) throw new Error("metadata unavailable");
+    }),
+  ).rejects.toMatchObject({
+    outcome: "unknown",
+    stage: "confirmation",
+    knownHashes: [f.original, f.replacement],
+  });
+  expect(f.sends).toBe(1);
+});
+
+it("a provider rejection carrying an accepted hash remains uncertain", async () => {
+  const provider = installFundingProvider("success", true);
+  const request = provider.request;
+  const hash = `0x${"a".repeat(64)}`;
+  provider.request = async (args) => {
+    if (args.method === "eth_sendTransaction")
+      throw Object.assign(new Error("https://rpc.invalid/private-key"), {
+        code: 4001,
+        transactionHash: hash,
+      });
+    return request(args);
+  };
+  vi.stubGlobal("window", { ethereum: provider });
+  const failure = await wallet()
+    .fundEvm(config, vault, 120000000000000000n)
+    .catch((error: unknown) => error);
+  expect(failure).toMatchObject({
+    outcome: "unknown",
+    knownHashes: [hash],
+    diagnostic: { category: "rejected", code: "4001" },
+  });
+  expect(JSON.stringify(failure)).not.toMatch(/rpc.invalid|private-key/);
+});
+
+it("reports a later NEAR error hash on its own step after preserving earlier completion", async () => {
+  const hash = "11111111111111111111111111111111";
+  nearFixture.results = [
+    nearSuccess,
+    Object.assign(new Error("timeout"), {
+      transactionHash: hash,
+      cause: { hash },
+    }),
+  ];
+  const events: unknown[] = [];
+  await expect(
+    wallet().sendNear(
+      nearConfig,
+      [nearAction, nearAction],
+      "borrower.test",
+      async (event) => {
+        events.push(event);
+      },
+    ),
+  ).rejects.toMatchObject({
+    outcome: "unknown",
+    knownHashes: ["confirmed-one", hash],
+    diagnostic: { category: "timeout" },
+  });
+  expect(events).toEqual([
+    { step: 0, event: "submission-started" },
+    { step: 0, event: "hash", hash: "confirmed-one" },
+    { step: 1, event: "submission-started" },
+    { step: 1, event: "hash", hash },
+  ]);
+  expect(nearFixture.calls).toBe(2);
+});
+
+it("failed error-hint acknowledgement retains all hashes and uncertainty without another wallet request", async () => {
+  const hash = "11111111111111111111111111111111";
+  nearFixture.results = [
+    nearSuccess,
+    Object.assign(new Error("timeout"), { hash }),
+  ];
+  const hints: unknown[] = [];
+  await expect(
+    wallet().sendNear(
+      nearConfig,
+      [nearAction, nearAction],
+      "borrower.test",
+      async (event) => {
+        if (event.hash === hash) {
+          hints.push(event);
+          throw Object.assign(new Error("metadata rejected"), { code: 4001 });
+        }
+      },
+    ),
+  ).rejects.toMatchObject({
+    uncertainMutation: true,
+    knownHashes: ["confirmed-one", hash],
+    diagnostic: { category: "timeout" },
+  });
+  expect(hints).toEqual([{ step: 1, event: "hash", hash }]);
+  expect(nearFixture.calls).toBe(2);
+});
+
+it("reports only current-chain error hints after Ethereum submission actually starts", async () => {
+  const provider = installFundingProvider("success", true);
+  const request = provider.request;
+  const hash = `0x${"a".repeat(64)}`;
+  provider.request = async (args) => {
+    if (args.method === "eth_sendTransaction")
+      throw Object.assign(new Error("timeout"), {
+        transactionHash: hash,
+        cause: { hash: "11111111111111111111111111111111" },
+      });
+    return request(args);
+  };
+  vi.stubGlobal("window", { ethereum: provider });
+  const events: unknown[] = [];
+  await expect(
+    wallet().fundEvm(config, vault, 120000000000000000n, async (event) => {
+      events.push(event);
+    }),
+  ).rejects.toMatchObject({ outcome: "unknown" });
+  expect(events).toEqual([
+    { step: 0, event: "submission-started" },
+    { step: 0, event: "hash", hash },
+  ]);
+});
