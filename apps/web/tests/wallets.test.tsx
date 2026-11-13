@@ -370,7 +370,7 @@ it("direct Meteor confirmation persists only the actual selected public account 
   await expect(
     wallet().sendNear(nearConfig, [nearAction], "borrower.test"),
   ).rejects.toMatchObject({ uncertainMutation: false });
-  expect(JSON.parse(values.get("proofcredit.wallet.near.v1")!)).toEqual({
+  expect(JSON.parse(values.get("rino.wallet.near.v1")!)).toEqual({
     version: 1,
     networkId: "testnet",
     walletId: "meteor-wallet",

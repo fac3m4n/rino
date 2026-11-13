@@ -16,7 +16,7 @@ const children = new Children(),
 await assert.rejects(
   startStack({
     children,
-    sandboxBinary: "/does-not-exist/proofcredit-sandbox",
+    sandboxBinary: "/does-not-exist/rino-sandbox",
   }),
   /startup failed/,
 );
@@ -86,7 +86,7 @@ try {
       headers: {
         origin: "http://127.0.0.1:3097",
         "content-type": "application/json",
-        "x-proofcredit-csrf": liveConfig.csrfToken,
+        "x-rino-csrf": liveConfig.csrfToken,
       },
       body: JSON.stringify({ action: name, role }),
     });
@@ -110,7 +110,7 @@ try {
         .map(Number);
       for (const pid of ids) {
         const id = await commandIdentity(pid);
-        if (id.includes("/proofcredit-worker-host --module")) workerPid = pid;
+        if (id.includes("/rino-worker-host --module")) workerPid = pid;
       }
     } catch {}
     await sleep(30);

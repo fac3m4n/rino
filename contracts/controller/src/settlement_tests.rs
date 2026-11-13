@@ -3,8 +3,8 @@ use crate::financial_tests::{ctx, funded, market, panic};
 use crate::tests::{context, id};
 use near_contract_standards::fungible_token::FungibleTokenCore;
 use near_sdk::{PromiseResult, mock::MockAction, test_utils::get_created_receipts};
-use proofcredit_loan_core::{default_cap_wei, signed_transaction_hash, signing_digest};
-use proofcredit_settlement_protocol::{
+use rino_loan_core::{default_cap_wei, signed_transaction_hash, signing_digest};
+use rino_settlement_protocol::{
     EMPTY_CODE_HASH, InclusionHeader, PROVIDER_IDS, ReceiptObservation, SettlementBundle,
     SettlementObservation, SettlementPurpose, SettlementRequest, TransactionObservation,
     verify_confirmation, verify_prepare,
@@ -18,7 +18,7 @@ fn hx(bytes: &[u8]) -> String {
     )
 }
 fn leaf(nonce: u64, balance: u128) -> Vec<u8> {
-    let address = proofcredit_settlement_protocol::fixed_hex::<20>(VAULT).unwrap();
+    let address = rino_settlement_protocol::fixed_hex::<20>(VAULT).unwrap();
     let key = signed_transaction_hash(&address);
     let mut path = vec![0x20];
     path.extend(key);
@@ -27,7 +27,7 @@ fn leaf(nonce: u64, balance: u128) -> Vec<u8> {
     account.append(&balance);
     account.append(&signed_transaction_hash(&[0x80]).as_slice());
     account.append(
-        &proofcredit_settlement_protocol::fixed_hex::<32>(EMPTY_CODE_HASH)
+        &rino_settlement_protocol::fixed_hex::<32>(EMPTY_CODE_HASH)
             .unwrap()
             .as_slice(),
     );
@@ -58,7 +58,7 @@ fn observations(r: &SettlementRequest) -> [SettlementObservation; 2] {
     PROVIDER_IDS.map(|p| SettlementObservation {
         inclusion_header: None,
         base_fee_per_gas: "1".into(),
-        checkpoint: proofcredit_proof_protocol::CheckpointObservation {
+        checkpoint: rino_proof_protocol::CheckpointObservation {
             provider_id: p.into(),
             chain_id: r.chain_id.clone(),
             finalized_number: r.bundle.block_number.clone(),
@@ -202,14 +202,14 @@ fn live_mpc_fixture() -> serde_json::Value {
 fn live_mpc_controller(fixture: &serde_json::Value) -> Controller {
     let mut c = cancelled();
     c.vault = Some(fixture["expectedVault"].as_str().unwrap().into());
-    let transfer: proofcredit_settlement_protocol::TransferIntentDto =
+    let transfer: rino_settlement_protocol::TransferIntentDto =
         serde_json::from_value(fixture["transfer"].clone()).unwrap();
     let transfer = transfer.to_native().unwrap();
     let s = &mut c.loan.as_mut().unwrap().settlement;
     s.intent = Some(settlement::FrozenIntent {
         transfer,
-        preimage: proofcredit_loan_core::signing_preimage(&transfer).unwrap(),
-        digest: proofcredit_settlement_protocol::fixed_hex::<32>(
+        preimage: rino_loan_core::signing_preimage(&transfer).unwrap(),
+        digest: rino_settlement_protocol::fixed_hex::<32>(
             fixture["signingDigest"].as_str().unwrap(),
         )
         .unwrap(),
@@ -242,12 +242,10 @@ fn private_callback_accepts_actual_mpc_normalized_parity_and_exact_independent_t
     let original = serde_json::to_vec(&fixture["signature"]).unwrap();
     // The financial verifier's canonical packet interface must stay strict.
     assert!(
-        proofcredit_loan_core::verify_mpc_signature(
+        rino_loan_core::verify_mpc_signature(
             &frozen.transfer,
-            proofcredit_settlement_protocol::fixed_hex::<20>(
-                fixture["expectedVault"].as_str().unwrap()
-            )
-            .unwrap(),
+            rino_settlement_protocol::fixed_hex::<20>(fixture["expectedVault"].as_str().unwrap())
+                .unwrap(),
             &original,
         )
         .is_err()
@@ -509,7 +507,7 @@ fn cancellation_prepare_pins_economics_before_signing_and_recovers_exact_mpc_sig
             }
         })
         .unwrap();
-    assert_eq!(args["request"]["path"], "proofcredit:sepolia:v1:0");
+    assert_eq!(args["request"]["path"], "rino:sepolia:v1:0");
     assert_eq!(
         args["request"]["payload_v2"]["Ecdsa"],
         hx(&c
@@ -718,7 +716,7 @@ fn canonical_views_expose_exact_string_money_and_only_verified_current_candidate
     assert_eq!(market["terms"]["principal_units"], "100000000");
     assert_eq!(
         market["settlement_wasm_sha256"],
-        "a0efb7959a1f227d7e81579820bf3b3cec9804d94e5095fa6a90b301052e19c7"
+        "11a8f330d8f6698c9e644230d37e86ebb7c985d77a697b05934a0bf482404758"
     );
     assert_eq!(market["terms"]["term_seconds"], "120");
     assert_eq!(market["debt_units"], "0");
@@ -864,7 +862,7 @@ fn alternate_signature(
     c: &Controller,
     secret: u8,
     k: u64,
-    change: impl FnOnce(&mut proofcredit_loan_core::TransferIntent),
+    change: impl FnOnce(&mut rino_loan_core::TransferIntent),
 ) -> String {
     use k256::ecdsa::hazmat::SignPrimitive;
     let mut intent = c
@@ -1046,11 +1044,11 @@ fn settlement_module_and_digest_are_pinned_and_confirmation_timeout_keeps_signed
     );
     assert_eq!(
         args["source"]["WasmUrl"]["hash"],
-        "a0efb7959a1f227d7e81579820bf3b3cec9804d94e5095fa6a90b301052e19c7"
+        "11a8f330d8f6698c9e644230d37e86ebb7c985d77a697b05934a0bf482404758"
     );
     assert!(args["secrets_ref"].is_null() && args["params"].is_null());
     assert_eq!(
-        proofcredit_settlement_protocol::settlement_request_digest(
+        rino_settlement_protocol::settlement_request_digest(
             args["input_data"].as_str().unwrap().as_bytes()
         ),
         c.pending.as_ref().unwrap().input_hash
@@ -1114,7 +1112,7 @@ fn testnet_settlement_derives_fixed_secret_profile_from_current_controller() {
             .unwrap();
         assert_eq!(
             args["secrets_ref"],
-            serde_json::json!({"profile":"proofcredit-rpc-v1","account_id":account})
+            serde_json::json!({"profile":"rino-rpc-v1","account_id":account})
         );
         assert_eq!(args["payer_account_id"], account);
         assert!(args["params"].is_null());
@@ -1215,9 +1213,9 @@ fn superseded_fifth_signature_can_confirm_actual_inclusion_without_a_fifth_relay
         .as_ref()
         .unwrap()
         .transfer;
-    let candidate = proofcredit_loan_core::verify_mpc_signature(
+    let candidate = rino_loan_core::verify_mpc_signature(
         f,
-        proofcredit_settlement_protocol::fixed_hex::<20>(VAULT).unwrap(),
+        rino_settlement_protocol::fixed_hex::<20>(VAULT).unwrap(),
         packets[4].as_bytes(),
     )
     .unwrap();
@@ -1290,9 +1288,9 @@ fn direct_confirmation_rejects_unknown_missing_forged_mismatched_and_oversized_p
         .as_ref()
         .unwrap()
         .transfer;
-    let candidate = proofcredit_loan_core::verify_mpc_signature(
+    let candidate = rino_loan_core::verify_mpc_signature(
         f,
-        proofcredit_settlement_protocol::fixed_hex::<20>(VAULT).unwrap(),
+        rino_settlement_protocol::fixed_hex::<20>(VAULT).unwrap(),
         packets[4].as_bytes(),
     )
     .unwrap();
@@ -1487,9 +1485,9 @@ fn settlement_gas_schedule_reserves_entry_headroom_and_requires_full_300_tgas() 
         .as_ref()
         .unwrap()
         .transfer;
-    let candidate = proofcredit_loan_core::verify_mpc_signature(
+    let candidate = rino_loan_core::verify_mpc_signature(
         &transfer,
-        proofcredit_settlement_protocol::fixed_hex::<20>(VAULT).unwrap(),
+        rino_settlement_protocol::fixed_hex::<20>(VAULT).unwrap(),
         packet.as_bytes(),
     )
     .unwrap();

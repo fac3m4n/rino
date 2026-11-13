@@ -1,5 +1,5 @@
-use proofcredit_proof_protocol::CheckpointObservation;
-use proofcredit_settlement_protocol::*;
+use rino_proof_protocol::CheckpointObservation;
+use rino_settlement_protocol::*;
 use rlp::RlpStream;
 use serde_json::Value;
 use tiny_keccak::{Hasher, Keccak};

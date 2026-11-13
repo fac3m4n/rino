@@ -289,7 +289,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "proofcredit-loan-core"
+name = "rino-loan-core"
 version = "0.1.0"
 dependencies = [
  "borsh",

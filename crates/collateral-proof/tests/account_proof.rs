@@ -1,4 +1,4 @@
-use proofcredit_collateral_proof::{
+use rino_collateral_proof::{
     verify_account, AccountState, ProofError, MAX_NODE_BYTES, MAX_PROOF_NODES,
 };
 use rlp::RlpStream;

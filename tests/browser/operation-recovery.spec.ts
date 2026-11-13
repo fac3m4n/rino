@@ -5,10 +5,10 @@ import {
   stateFixture,
   settlementFixture,
 } from "../../apps/web/tests/fixtures";
-import type { State, OperationView } from "@proofcredit/coordinator/api";
+import type { State, OperationView } from "@rino/coordinator/api";
 
-const borrower = "proofcredit-b-2593ce.testnet";
-const lender = "proofcredit-l-2593ce.testnet";
+const borrower = "rino-b-2593ce.testnet";
+const lender = "rino-l-2593ce.testnet";
 const id = "11111111-1111-4111-8111-111111111111";
 const proof = (page: Page) =>
   page.getByRole("button", { name: /^Authenticate collateral/ });

@@ -24,10 +24,10 @@ process.on("SIGINT", stop);
 process.on("SIGTERM", stop);
 
 try {
-  const labPause = process.env.PROOFCREDIT_LAB_STARTUP_PAUSE;
+  const labPause = process.env.RINO_LAB_STARTUP_PAUSE;
   if (
     labPause &&
-    (labPause !== "after-anvil" || process.env.PROOFCREDIT_MODE === "public")
+    (labPause !== "after-anvil" || process.env.RINO_MODE === "public")
   )
     throw Error("local lab startup pause configuration rejected");
   const stack = await startStack({
@@ -52,7 +52,7 @@ try {
           }
           children.assertOpen();
           console.log(
-            `ProofCredit lab startup paused ${JSON.stringify({ ...info, masterPid: process.pid })}`,
+            `Rino lab startup paused ${JSON.stringify({ ...info, masterPid: process.pid })}`,
           );
           await new Promise<void>((_resolve, reject) => {
             const cancelled = () => reject(cancellation.signal.reason);
@@ -78,8 +78,8 @@ try {
       [resolve(ROOT, "services/coordinator/src/server.ts")],
       {
         ...process.env,
-        PROOFCREDIT_MODE: "local",
-        PROOFCREDIT_SESSION: stack.manifestPath,
+        RINO_MODE: "local",
+        RINO_SESSION: stack.manifestPath,
       },
     );
     child.stdout?.on("data", (b) => process.stdout.write(b));

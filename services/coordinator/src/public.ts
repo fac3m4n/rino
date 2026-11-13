@@ -12,7 +12,10 @@ import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { ROOT } from "./processes.ts";
 import { Journal, SerialQueue, verifyRelay } from "./safety.ts";
-import { PINS } from "./local.ts";
+import {
+  publicArtifactHashes,
+  type PublicArtifactHashes,
+} from "./public-artifacts.ts";
 import { collateralShortfall, collateralSufficient } from "./collateral.ts";
 import { parseAlchemyEndpoint } from "../../../tooling/outlayer-secrets.mjs";
 import type {
@@ -47,8 +50,7 @@ function nearEndpoint(): string {
     throw Error("Invalid NEAR testnet RPC endpoint");
   }
 }
-interface Deployment {
-  version: 2;
+interface DeploymentFields {
   controllerId: string;
   borrowerId: string;
   lenderId: string;
@@ -59,6 +61,8 @@ interface Deployment {
   collateralUrl: string;
   settlementUrl: string;
 }
+type Deployment = DeploymentFields &
+  ({ version: 2 } | { version: 3; artifacts: PublicArtifactHashes });
 async function ethereum(
   url: string,
   method: string,
@@ -112,8 +116,12 @@ export class PublicCoordinator {
   readonly queue = new SerialQueue(4);
   readonly #provider: JsonRpcProvider;
   readonly operations: PublicOperations;
+  readonly #artifactHashes: PublicArtifactHashes;
   get provider(): JsonRpcProvider {
     return this.#provider;
+  }
+  get artifactHashes(): PublicArtifactHashes {
+    return this.#artifactHashes;
   }
   private readonly readinessCache = new ReadCache(
     15000,
@@ -136,7 +144,9 @@ export class PublicCoordinator {
     alchemyUrl: string,
     nearUrl: string,
     operations: OperationJournal,
+    artifacts: PublicArtifactHashes,
   ) {
+    this.#artifactHashes = artifacts;
     this.#provider = createPublicNearProvider(nearUrl);
     this.#urls = ["https://ethereum-sepolia-rpc.publicnode.com/", alchemyUrl];
     this.operations = new PublicOperations({
@@ -161,12 +171,15 @@ export class PublicCoordinator {
     if (!path) return undefined;
     const d = JSON.parse(await readFile(path, "utf8")) as Deployment;
     if (
+      !d ||
+      typeof d !== "object" ||
+      Array.isArray(d) ||
       Object.keys(d).sort().join(",") !==
-        "borrowerId,borrowerRecipient,collateralUrl,controllerCodeHash,controllerId,lenderId,lenderRecipient,operationDeposit,settlementUrl,version" ||
-      d.version !== 2
+        `${d.version === 3 ? "artifacts," : ""}borrowerId,borrowerRecipient,collateralUrl,controllerCodeHash,controllerId,lenderId,lenderRecipient,operationDeposit,settlementUrl,version` ||
+      (d.version !== 2 && d.version !== 3)
     )
       throw Error(
-        "public deployment manifest schema rejected; create a complete version 2 manifest binding borrowerRecipient, lenderRecipient and operationDeposit to the reviewed initialization payload",
+        "public deployment manifest schema rejected; use a complete version 2 or version 3 manifest binding borrowerRecipient, lenderRecipient and operationDeposit to the reviewed initialization payload; version 3 also requires artifact hashes",
       );
     if (
       typeof d.operationDeposit !== "string" ||
@@ -205,6 +218,11 @@ export class PublicCoordinator {
     }
     if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(d.controllerCodeHash))
       throw Error("public controller code hash required");
+    const artifacts = publicArtifactHashes(
+      d.version,
+      d.version === 3 ? d.artifacts : undefined,
+      d.controllerCodeHash,
+    );
     const { url: alchemyUrl } = parseAlchemyEndpoint(
       process.env.ALCHEMY_SEPOLIA_RPC_URL,
     );
@@ -224,6 +242,7 @@ export class PublicCoordinator {
       await OperationJournal.open(resolve(directory, "operations.json"), {
         controllerId: d.controllerId,
       }),
+      artifacts,
     );
   }
   async view<T = any>(method: string): Promise<T> {
@@ -262,7 +281,7 @@ export class PublicCoordinator {
         config.executor !== "outlayer.testnet" ||
         config.mpc !== "v1.signer-prod.testnet" ||
         config.wasm_url !== this.deployment.collateralUrl ||
-        config.wasm_sha256 !== PINS.collateral ||
+        config.wasm_sha256 !== this.artifactHashes.collateral ||
         config.network !== "NearTestnet" ||
         config.operation_deposit !== this.deployment.operationDeposit ||
         market?.lender !== this.deployment.lenderId ||
@@ -272,7 +291,7 @@ export class PublicCoordinator {
           this.deployment.lenderRecipient.toLowerCase() ||
         market?.terms.term_seconds !== "86400" ||
         market?.settlement_wasm_url !== this.deployment.settlementUrl ||
-        market?.settlement_wasm_sha256 !== PINS.settlement
+        market?.settlement_wasm_sha256 !== this.artifactHashes.settlement
       )
         errors.push("Public deployment immutable configuration mismatch");
       return errors;

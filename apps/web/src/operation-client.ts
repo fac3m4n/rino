@@ -6,11 +6,8 @@ import type {
   OperationResult,
   OperationView,
   Role,
-} from "@proofcredit/coordinator/api";
-import {
-  DIAGNOSTIC_CODES,
-  DIAGNOSTIC_NAMES,
-} from "@proofcredit/coordinator/api";
+} from "@rino/coordinator/api";
+import { DIAGNOSTIC_CODES, DIAGNOSTIC_NAMES } from "@rino/coordinator/api";
 import {
   ACTION_TIMEOUT_MS,
   GET_TIMEOUT_MS,
@@ -38,7 +35,7 @@ const actions = [
   "advance-maturity",
   "recover",
 ];
-const hintKey = "proofcredit.operations.v1";
+const hintKey = "rino.operations.v1";
 type ObjectValue = Record<string, unknown>;
 function object(v: unknown): v is ObjectValue {
   return !!v && typeof v === "object" && !Array.isArray(v);

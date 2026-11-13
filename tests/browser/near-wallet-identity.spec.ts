@@ -2,8 +2,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { configFixture, stateFixture } from "../../apps/web/tests/fixtures";
 
-const borrower = "proofcredit-b-2593ce.testnet";
-const lender = "proofcredit-l-2593ce.testnet";
+const borrower = "rino-b-2593ce.testnet";
+const lender = "rino-l-2593ce.testnet";
 const proof = (page: Page) =>
   page.getByRole("button", { name: /^Authenticate collateral/ });
 const connected = (page: Page, account: string) =>

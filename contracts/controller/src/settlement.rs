@@ -1,5 +1,5 @@
 use crate::*;
-use proofcredit_loan_core::{SettlementBranch, SignedTransaction, TransferIntent};
+use rino_loan_core::{SettlementBranch, SignedTransaction, TransferIntent};
 #[near(serializers = [json, borsh])]
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SettlementStage {
@@ -64,7 +64,7 @@ pub struct ConfirmedLeg {
     pub fee: U128,
     pub block_number: U64,
 }
-use proofcredit_settlement_protocol::SettlementBundle;
+use rino_settlement_protocol::SettlementBundle;
 #[near(serializers = [json])]
 #[derive(Clone, Debug)]
 #[serde(deny_unknown_fields)]
@@ -72,11 +72,11 @@ pub struct ConfirmationBundle {
     pub checkpoint: SettlementBundle,
     pub transaction_index: String,
 }
-use proofcredit_loan_core::{
+use rino_loan_core::{
     Plan, SettlementState, WEI_PER_ETH, debt_units, default_cap_wei, plan_transfer, signing_digest,
     signing_preimage,
 };
-use proofcredit_settlement_protocol::{
+use rino_settlement_protocol::{
     self as protocol, SettlementEvidence, SettlementPurpose, SettlementRequest,
     SignedTransactionDto, TransferIntentDto, decimal_u64, decimal_u128, fixed_hex,
 };
@@ -125,7 +125,7 @@ impl Controller {
             let vault = fixed_hex::<20>(self.vault.as_ref().expect("derived vault"))
                 .expect("validated vault");
             let candidate =
-                proofcredit_loan_core::verify_mpc_signature(&f.transfer, vault, packet.as_bytes())
+                rino_loan_core::verify_mpc_signature(&f.transfer, vault, packet.as_bytes())
                     .expect("invalid confirmation signature");
             assert_eq!(candidate.hash, hash, "confirmation signature hash mismatch");
             candidate

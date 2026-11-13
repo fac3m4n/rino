@@ -1,4 +1,4 @@
-use proofcredit_worker_host::gateway::Gateway;
+use rino_worker_host::gateway::Gateway;
 #[tokio::test]
 async fn gateway_accepts_explicit_loopback_and_rejects_remote_upstream() {
     assert!(
@@ -128,7 +128,7 @@ async fn gateway_forwards_read_only_rpc_and_never_forwards_mutations_or_other_ho
             &g,
             "eth_chainId",
             "eth-sepolia.g.alchemy.com",
-            "/v2/proofcredit-local-test-key"
+            "/v2/rino-local-test-key"
         )
         .await
         .0,
@@ -136,17 +136,11 @@ async fn gateway_forwards_read_only_rpc_and_never_forwards_mutations_or_other_ho
     );
     for (host, path) in [
         ("eth-sepolia.g.alchemy.com", "/v2/ambient_secret"),
-        (
-            "eth-sepolia.g.alchemy.com",
-            "/v2/proofcredit-local-test-key?x",
-        ),
-        (
-            "eth-sepolia.g.alchemy.com:443",
-            "/v2/proofcredit-local-test-key",
-        ),
+        ("eth-sepolia.g.alchemy.com", "/v2/rino-local-test-key?x"),
+        ("eth-sepolia.g.alchemy.com:443", "/v2/rino-local-test-key"),
         (
             "eth-sepolia.g.alchemy.com.attacker.invalid",
-            "/v2/proofcredit-local-test-key",
+            "/v2/rino-local-test-key",
         ),
     ] {
         assert_eq!(request_path(&g, "eth_chainId", host, path).await.0, 403);
@@ -164,7 +158,7 @@ async fn gateway_forwards_read_only_rpc_and_never_forwards_mutations_or_other_ho
 }
 #[test]
 fn production_cli_forbids_local_clock_and_rpc_configuration() {
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_proofcredit-worker-host"))
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_rino-worker-host"))
         .args([
             "--module",
             "unused",
@@ -195,7 +189,7 @@ fn production_cli_rejects_missing_or_invalid_credentials_before_loading_guest() 
         Some("short"),
         Some("leak-me-".repeat(20)).as_deref(),
     ] {
-        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_proofcredit-worker-host"));
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_rino-worker-host"));
         command.env_clear().args([
             "--module",
             "unused",
@@ -220,10 +214,7 @@ fn production_cli_rejects_missing_or_invalid_credentials_before_loading_guest() 
 #[test]
 fn production_hooks_require_explicit_credential() {
     assert!(
-        proofcredit_worker_host::transport::Hooks::new(
-            proofcredit_worker_host::Adapter::Production
-        )
-        .is_err()
+        rino_worker_host::transport::Hooks::new(rino_worker_host::Adapter::Production).is_err()
     );
 }
 
@@ -260,12 +251,12 @@ async fn local_cli_ignores_ambient_real_credential_and_uses_synthetic_only() {
         }
     });
     let output = tokio::task::spawn_blocking(move || {
-        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_proofcredit-worker-host"))
+        let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_rino-worker-host"))
             .env_clear()
             .env("ALCHEMY_API_KEY", "AMBIENT-private-key-do-not-forward")
             .args([
                 "--module",
-                "../../target/wasm32-wasip2/release/proofcredit-proof-worker.wasm",
+                "../../target/wasm32-wasip2/release/rino-proof-worker.wasm",
                 "--input",
                 "-",
                 "--mode",
@@ -307,9 +298,8 @@ async fn local_cli_ignores_ambient_real_credential_and_uses_synthetic_only() {
 #[tokio::test]
 async fn production_library_rejects_implicit_or_invalid_credentials_and_redacts_guest_diagnostics()
 {
-    use proofcredit_worker_host::{Adapter, Runner};
-    let runner =
-        Runner::new("../../target/wasm32-wasip2/release/proofcredit-proof-worker.wasm").unwrap();
+    use rino_worker_host::{Adapter, Runner};
+    let runner = Runner::new("../../target/wasm32-wasip2/release/rino-proof-worker.wasm").unwrap();
     assert!(runner.run(b"invalid", Adapter::Production).await.is_err());
     for key in ["", "bad/path", "short", &"x".repeat(129)] {
         let error = runner.run_production(b"invalid", key).await.unwrap_err();

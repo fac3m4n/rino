@@ -6,7 +6,7 @@ import {
   settlementFixture,
 } from "../../apps/web/tests/fixtures";
 import { ACTION_TIMEOUT_MS, GET_TIMEOUT_MS } from "../../apps/web/src/client";
-import type { State, Receipt } from "@proofcredit/coordinator/api";
+import type { State, Receipt } from "@rino/coordinator/api";
 const closed: State = {
   ...stateFixture,
   market: {
@@ -394,7 +394,7 @@ test("@continue never-received POST permits deliberate continuation only after f
   ).toContainText("0");
   await expect(page.getByTestId("settlement-stage")).toHaveCount(0);
   await page.screenshot({
-    path: `.cache/proofcredit-browser/fixture-fix2-continued-${test.info().project.name}.png`,
+    path: `.cache/rino-browser/fixture-fix2-continued-${test.info().project.name}.png`,
     fullPage: true,
   });
   await expect(

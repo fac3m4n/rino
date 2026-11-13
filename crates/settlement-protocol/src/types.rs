@@ -113,7 +113,7 @@ pub struct InclusionHeader {
 pub struct SettlementObservation {
     pub inclusion_header: Option<InclusionHeader>,
     pub base_fee_per_gas: String,
-    pub checkpoint: proofcredit_proof_protocol::CheckpointObservation,
+    pub checkpoint: rino_proof_protocol::CheckpointObservation,
     pub transaction: Option<TransactionObservation>,
     pub receipt: Option<ReceiptObservation>,
 }

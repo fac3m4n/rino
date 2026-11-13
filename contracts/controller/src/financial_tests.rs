@@ -8,7 +8,7 @@ fn config() -> LoanConfig {
         borrower_recipient: "0x1111111111111111111111111111111111111111".into(),
         lender_recipient: "0x2222222222222222222222222222222222222222".into(),
         settlement_wasm_url: "https://example.com/settlement.wasm".into(),
-        settlement_wasm_sha256: "a0efb7959a1f227d7e81579820bf3b3cec9804d94e5095fa6a90b301052e19c7"
+        settlement_wasm_sha256: "11a8f330d8f6698c9e644230d37e86ebb7c985d77a697b05934a0bf482404758"
             .into(),
     }
 }
@@ -59,7 +59,7 @@ pub(super) fn panic(f: impl FnOnce()) {
     assert!(catch_unwind(AssertUnwindSafe(f)).is_err());
 }
 fn eligible(c: &mut Controller, timestamp: u64, balance: &str) {
-    c.evidence=Some(serde_json::to_vec(&serde_json::json!({"schema_version":1,"policy_id":"rpc-finalized-2of2-v1","status":"verified","controller_id":"controller.testnet","request_id":"1","request_hash":format!("0x{}","ab".repeat(32)),"chain_id":"11155111","vault":ADDRESS,"block_number":"42","block_hash":format!("0x{}","11".repeat(32)),"state_root":format!("0x{}","22".repeat(32)),"block_timestamp":timestamp.to_string(),"nonce":"0","balance_wei":balance,"code_hash":proofcredit_proof_protocol::EMPTY_CODE_HASH,"finality_basis":"rpc-finalized-2of2"})).unwrap());
+    c.evidence=Some(serde_json::to_vec(&serde_json::json!({"schema_version":1,"policy_id":"rpc-finalized-2of2-v1","status":"verified","controller_id":"controller.testnet","request_id":"1","request_hash":format!("0x{}","ab".repeat(32)),"chain_id":"11155111","vault":ADDRESS,"block_number":"42","block_hash":format!("0x{}","11".repeat(32)),"state_root":format!("0x{}","22".repeat(32)),"block_timestamp":timestamp.to_string(),"nonce":"0","balance_wei":balance,"code_hash":rino_proof_protocol::EMPTY_CODE_HASH,"finality_basis":"rpc-finalized-2of2"})).unwrap());
 }
 pub(super) fn funded() -> Controller {
     let mut c = market();

@@ -298,7 +298,7 @@ async fn serve(mut socket: TcpStream, tls: TlsAcceptor, wire: Wire) {
     let trailer = if matches!(wire.scenario, Scenario::InvalidTrailer) {
         &b"malformed trailer\r\n\r\n"[..]
     } else {
-        &b"x-proofcredit: ok\r\n\r\n"[..]
+        &b"x-rino: ok\r\n\r\n"[..]
     };
     let _ = s.write_all(trailer).await;
     let _ = s.shutdown().await;

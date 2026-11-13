@@ -24,7 +24,7 @@ import {
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const PROFILE = "proofcredit-rpc-v1";
+const PROFILE = "rino-rpc-v1";
 const PUBKEY_URL = "https://testnet-api.outlayer.ai/secrets/pubkey";
 const SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
 const HASH = /^[a-f0-9]{64}$/;

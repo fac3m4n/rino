@@ -1,4 +1,4 @@
-//! Bounded ProofCredit request and evidence validation. RPC agreement is a trust
+//! Bounded Rino request and evidence validation. RPC agreement is a trust
 //! policy, not Ethereum consensus verification or execution attestation.
 pub mod quantities;
 mod types;

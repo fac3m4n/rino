@@ -1,4 +1,4 @@
-use proofcredit_loan_core::*;
+use rino_loan_core::*;
 const G: u128 = 2_100_000_000_000_000;
 const C: u128 = 50_500_000_000_000_000;
 fn state(branch: SettlementBranch, balance_wei: u128) -> SettlementState {

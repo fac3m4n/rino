@@ -57,7 +57,7 @@ describe("relay custody boundary", () => {
       ).rejects.toThrow();
   });
   it("fsyncs public signed bytes before send and recovers identical raw on restart after lost response", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "proofcredit-journal-"));
+    const dir = await mkdtemp(join(tmpdir(), "rino-journal-"));
     const path = join(dir, "journal.json");
     const j = await Journal.open(path);
     const f = await fixture();
@@ -128,7 +128,7 @@ it("serializes bounded operations and releases queue after a rejected action", a
 });
 it("serializes concurrent durable saves so bridge receipts and broadcast bytes survive restart", async () => {
   const path = join(
-    await mkdtemp(join(tmpdir(), "proofcredit-concurrent-")),
+    await mkdtemp(join(tmpdir(), "rino-concurrent-")),
     "journal.json",
   );
   const j = await Journal.open(path);

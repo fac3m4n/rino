@@ -1,10 +1,10 @@
 //! Fixed-provider purpose-bound settlement worker. Reuses the production bounded
 //! HTTPS transport and its single absolute deadline per request/body/trailers.
-use proofcredit_proof_protocol::{quantities::format_u256, CheckpointObservation};
-use proofcredit_proof_worker::read_bounded;
-pub use proofcredit_proof_worker::rpc::WasiTransport;
-pub use proofcredit_proof_worker::{Provider, RpcResponse, RpcTransport, WorkerError, PROVIDERS};
-use proofcredit_settlement_protocol::*;
+use rino_proof_protocol::{quantities::format_u256, CheckpointObservation};
+use rino_proof_worker::read_bounded;
+pub use rino_proof_worker::rpc::WasiTransport;
+pub use rino_proof_worker::{Provider, RpcResponse, RpcTransport, WorkerError, PROVIDERS};
+use rino_settlement_protocol::*;
 use serde_json::{json, Value};
 use std::io::{self, Read, Write};
 fn rpc(

@@ -6,7 +6,7 @@ import {
   operationFixture,
   settlementFixture,
 } from "../../apps/web/tests/fixtures";
-import type { Receipt, State } from "@proofcredit/coordinator/api";
+import type { Receipt, State } from "@rino/coordinator/api";
 
 test.setTimeout(30000);
 test.use({ actionTimeout: 4000 });

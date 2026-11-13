@@ -13,7 +13,7 @@ export function encryptSecretJson(
 ): string;
 export interface SecretStoreArguments {
   readonly accessor: { readonly WasmHash: { readonly hash: string } };
-  readonly profile: "proofcredit-rpc-v1";
+  readonly profile: "rino-rpc-v1";
   readonly encrypted_secrets_base64: string;
   readonly access: {
     readonly Logic: {

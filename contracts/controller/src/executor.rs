@@ -22,7 +22,7 @@ pub fn validate_url(value: &str) {
 pub fn execution_args(config: &Config, input: &[u8]) -> Vec<u8> {
     let secrets_ref = match config.network {
         NetworkMode::NearTestnet => serde_json::json!({
-            "profile": "proofcredit-rpc-v1",
+            "profile": "rino-rpc-v1",
             "account_id": env::current_account_id(),
         }),
         NetworkMode::Sandbox { .. } => serde_json::Value::Null,

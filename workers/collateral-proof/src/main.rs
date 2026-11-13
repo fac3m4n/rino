@@ -1,4 +1,4 @@
-use proofcredit_proof_worker::{rpc::WasiTransport, run_entry};
+use rino_proof_worker::{rpc::WasiTransport, run_entry};
 fn main() {
     #[cfg(target_os = "wasi")]
     let now = wasi::clocks::wall_clock::now().seconds;

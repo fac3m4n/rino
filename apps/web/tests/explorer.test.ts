@@ -1,6 +1,6 @@
 /** UI-only hash fixtures, not public chain evidence. */
 import { expect, it } from "vitest";
-import type { Config, Receipt } from "@proofcredit/coordinator/api";
+import type { Config, Receipt } from "@rino/coordinator/api";
 import { explorerUrl } from "../src/explorer";
 import { configFixture } from "./fixtures";
 

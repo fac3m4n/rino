@@ -1,5 +1,5 @@
-use proofcredit_settlement_protocol::*;
-use proofcredit_settlement_worker::*;
+use rino_settlement_protocol::*;
+use rino_settlement_worker::*;
 use serde_json::{json, Value};
 use std::{cell::RefCell, io::Cursor};
 #[allow(dead_code)]

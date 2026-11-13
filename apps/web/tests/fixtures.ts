@@ -1,9 +1,5 @@
 /** UI-only fixtures. These are not chain receipts or proof evidence. */
-import type {
-  Config,
-  State,
-  OperationView,
-} from "@proofcredit/coordinator/api";
+import type { Config, State, OperationView } from "@rino/coordinator/api";
 export const configFixture: Config = {
   apiVersion: 1,
   mode: "local",

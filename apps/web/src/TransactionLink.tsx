@@ -1,4 +1,4 @@
-import type { Config, Receipt } from "@proofcredit/coordinator/api";
+import type { Config, Receipt } from "@rino/coordinator/api";
 import { explorerUrl } from "./explorer";
 
 export function TransactionLink({

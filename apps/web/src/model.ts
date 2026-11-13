@@ -1,11 +1,11 @@
-import { collateralSufficient } from "@proofcredit/coordinator/collateral";
+import { collateralSufficient } from "@rino/coordinator/collateral";
 import type {
   ActionName,
   Config,
   Role,
   State,
   Settlement,
-} from "@proofcredit/coordinator/api";
+} from "@rino/coordinator/api";
 
 /** Decimal integer formatting: no floating point conversion or upward rounding. */
 export function formatUnits(

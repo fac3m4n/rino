@@ -10,11 +10,11 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 PATHS = [
-    "target/wasm32-unknown-unknown/release/proofcredit_controller.wasm",
-    "target/wasm32-wasip2/release/proofcredit-proof-worker.wasm",
-    "target/wasm32-unknown-unknown/release/proofcredit_pipeline_services.wasm",
+    "target/wasm32-unknown-unknown/release/rino_controller.wasm",
+    "target/wasm32-wasip2/release/rino-proof-worker.wasm",
+    "target/wasm32-unknown-unknown/release/rino_pipeline_services.wasm",
     ".tools/near-sandbox/2.14.0/near-sandbox",
-    "target/wasm32-wasip2/release/proofcredit-settlement-worker.wasm",
+    "target/wasm32-wasip2/release/rino-settlement-worker.wasm",
 ]
 
 

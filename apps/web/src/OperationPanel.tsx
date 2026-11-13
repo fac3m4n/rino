@@ -4,7 +4,7 @@ import type {
   Config,
   OperationView,
   Role,
-} from "@proofcredit/coordinator/api";
+} from "@rino/coordinator/api";
 import { validHash } from "./operation-client";
 import { TransactionLink } from "./TransactionLink";
 

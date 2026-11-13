@@ -2,7 +2,7 @@ import {
   DIAGNOSTIC_CODES,
   DIAGNOSTIC_NAMES,
   type OperationDiagnostic,
-} from "@proofcredit/coordinator/api";
+} from "@rino/coordinator/api";
 
 export type Outcome =
   "unknown" | "partial" | "rejected" | "cancelled" | "failed";

@@ -1,4 +1,4 @@
-import type { Config, Receipt } from "@proofcredit/coordinator/api";
+import type { Config, Receipt } from "@rino/coordinator/api";
 import { TransactionLink } from "./TransactionLink";
 
 const source: Record<Receipt["chain"], string> = {

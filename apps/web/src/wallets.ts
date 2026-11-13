@@ -7,7 +7,7 @@ import {
   type Address,
 } from "viem";
 import { sepolia } from "viem/chains";
-import type { Config, WalletAction } from "@proofcredit/coordinator/api";
+import type { Config, WalletAction } from "@rino/coordinator/api";
 import { ActionFailure, submissionFailure, userRejected } from "./outcomes";
 
 import { WalletSession, type Injected } from "./wallet-session";

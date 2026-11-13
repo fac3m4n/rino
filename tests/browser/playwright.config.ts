@@ -5,10 +5,10 @@ export default defineConfig({
   expect: { timeout: 180000 },
   fullyParallel: false,
   workers: 1,
-  outputDir: "../../.cache/proofcredit-browser/results",
+  outputDir: "../../.cache/rino-browser/results",
   reporter: [
     ["list"],
-    ["json", { outputFile: "../../.cache/proofcredit-browser/results.json" }],
+    ["json", { outputFile: "../../.cache/rino-browser/results.json" }],
   ],
   use: {
     baseURL: "http://127.0.0.1:4173",

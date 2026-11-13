@@ -1,6 +1,6 @@
 use crate::settlement::{ConfirmedLeg, SettlementStage};
 use crate::*;
-use proofcredit_settlement_protocol::{SignedTransactionDto, TransferIntentDto};
+use rino_settlement_protocol::{SignedTransactionDto, TransferIntentDto};
 #[near(serializers = [json])]
 #[derive(Clone, Debug)]
 pub struct TermsView {
@@ -74,7 +74,7 @@ pub struct SettlementView {
     pub retired: bool,
 }
 use near_contract_standards::fungible_token::FungibleTokenCore;
-use proofcredit_loan_core::{
+use rino_loan_core::{
     GAS_LIMIT, SettlementBranch, WEI_PER_ETH, debt_units, default_cap_wei, initial_fee_budget,
 };
 #[near]
@@ -95,7 +95,7 @@ impl Controller {
             settlement_wasm_url: l.config.settlement_wasm_url.clone(),
             settlement_wasm_sha256: l.config.settlement_wasm_sha256.clone(),
             terms: TermsView {
-                version: "proofcredit-demo-v1".into(),
+                version: "rino-demo-v1".into(),
                 principal_units: U128(t.principal_units),
                 fee_units: U128(t.fee_units),
                 debt_units: U128(debt_units(t).expect("fixed terms")),

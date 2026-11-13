@@ -1,4 +1,4 @@
-use proofcredit_settlement_protocol::*;
+use rino_settlement_protocol::*;
 use serde_json::json;
 mod common;
 use common::*;

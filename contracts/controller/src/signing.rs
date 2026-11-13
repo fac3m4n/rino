@@ -1,8 +1,8 @@
 //! A timeout only releases transport work. The exact economic intent stays locked.
 use crate::settlement::SettlementStage;
 use crate::*;
-use proofcredit_loan_core::{MAX_MPC_SIGNATURE_BYTES, verify_mpc_signature};
-use proofcredit_settlement_protocol::fixed_hex;
+use rino_loan_core::{MAX_MPC_SIGNATURE_BYTES, verify_mpc_signature};
+use rino_settlement_protocol::fixed_hex;
 const SIGN_CALLBACK_GAS: Gas = Gas::from_tgas(100);
 
 #[derive(serde::Deserialize, serde::Serialize)]

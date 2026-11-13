@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Config, State } from "@proofcredit/coordinator/api";
+import type { Config, State } from "@rino/coordinator/api";
 import {
   formatUnits,
   actionGuard,

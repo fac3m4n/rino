@@ -1,4 +1,4 @@
-use proofcredit_loan_core::*;
+use rino_loan_core::*;
 use serde_json::{json, Value};
 fn vectors() -> Vec<Value> {
     serde_json::from_str(include_str!("fixtures/viem-2.57.19.json")).unwrap()

@@ -1,9 +1,9 @@
 use crate::*;
 use near_sdk::assert_one_yocto;
-use proofcredit_loan_core::{
+use rino_loan_core::{
     SettlementBranch, Terms, debt_units, demo_terms, initial_fee_budget, validate_collateral,
 };
-use proofcredit_settlement_protocol::{decimal_u64, decimal_u128, fixed_hex};
+use rino_settlement_protocol::{decimal_u64, decimal_u128, fixed_hex};
 
 #[near(serializers = [json, borsh])]
 #[derive(Clone, Debug)]

@@ -6,7 +6,7 @@ import {
   operationFixture,
 } from "../../apps/web/tests/fixtures";
 import { ACTION_TIMEOUT_MS } from "../../apps/web/src/client";
-import type { OperationView } from "@proofcredit/coordinator/api";
+import type { OperationView } from "@rino/coordinator/api";
 
 test.setTimeout(20000);
 test.use({ actionTimeout: 3000 });

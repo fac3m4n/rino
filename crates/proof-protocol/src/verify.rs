@@ -1,7 +1,5 @@
 use crate::{quantities::*, *};
-use proofcredit_collateral_proof::{
-    verify_account, MAX_NODE_BYTES, MAX_PROOF_BYTES, MAX_PROOF_NODES,
-};
+use rino_collateral_proof::{verify_account, MAX_NODE_BYTES, MAX_PROOF_BYTES, MAX_PROOF_NODES};
 use sha2::{Digest, Sha256};
 
 /// Bound and validate the untrusted request before a worker makes RPC calls.

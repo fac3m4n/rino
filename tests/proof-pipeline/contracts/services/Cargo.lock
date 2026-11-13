@@ -816,7 +816,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "proofcredit-pipeline-services"
+name = "rino-pipeline-services"
 version = "0.1.0"
 dependencies = [
  "near-sdk",

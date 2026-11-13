@@ -59,7 +59,7 @@ const hash = "a".repeat(64),
   owner = "controller.testnet",
   borrower = "borrower.testnet",
   lender = "lender.testnet";
-const testKey = "proofcredit-synthetic-key",
+const testKey = "rino-synthetic-key",
   endpoint = `https://eth-sepolia.g.alchemy.com/v2/${testKey}`;
 const plaintext = Buffer.from(JSON.stringify({ ALCHEMY_API_KEY: testKey }));
 // RFC7748 Bob key pair: independent public interoperability vector.
@@ -156,19 +156,19 @@ describe("fixed credential boundary", () => {
 describe("hash/owner bound ECIES", () => {
   it("requires the exact owner and hash echoes and decodes the public preflight fixture", () => {
     expect(validatePubkeyResponse(response, hash, owner)).toEqual(recipient);
-    // Non-secret response captured 2026-11-12; embedded so tests need no cache.
+    // Fixed non-secret public-key sample with a synthetic owner; no live binding is claimed.
     const publicHash =
       "be818d821f076d5e1dbf3650b03811b7658c85b14fd5c2fa7abce4ac87184c69";
     expect(
       validatePubkeyResponse(
         {
           accessor: { type: "WasmHash", hash: publicHash },
-          owner: "proofcredit-c-2593ce.testnet",
+          owner: "rino-c-2593ce.testnet",
           pubkey:
             "32b5ae4112cab8cd1d9b46387f0f028c342ebdbee71c1593e1b7da78cf4bc841",
         },
         publicHash,
-        "proofcredit-c-2593ce.testnet",
+        "rino-c-2593ce.testnet",
       ),
     ).toHaveLength(32);
   });
@@ -207,7 +207,7 @@ describe("hash/owner bound ECIES", () => {
   it("matches the frozen RFC7748-based ECIESv1 vector exactly", () => {
     deterministic.enabled = true;
     expect(encryptSecretJson(plaintext, recipient)).toBe(
-      "AYUg8AmJMKdUdIt93LQ+91oNvzoNJjga9OukqY6qm05qAAECAwQFBgcICQoLdrVM+5qfeGndErCCEOVFRXqwpRjq27LmR0M3U4HaQUs9xiNOpqlv7NbEqUBYnAw4nT2C5P2BRzBxGWd04Eup",
+      "AYUg8AmJMKdUdIt93LQ+91oNvzoNJjga9OukqY6qm05qAAECAwQFBgcICQoLdrVM+5qfeGndErCCEOVFRXqwpRjowLPmDFM8WJHbUBIn3GBRq7U5+EPbj0bgEPgR3ORMthFyulU=",
     );
   });
   it("independently decrypts fresh frames with empty HKDF salt and trailing tag", () => {
@@ -245,7 +245,7 @@ describe("hash/owner bound ECIES", () => {
       args = secretStoreArgs(hash, owner, borrower, lender, ciphertext);
     expect(args).toEqual({
       accessor: { WasmHash: { hash } },
-      profile: "proofcredit-rpc-v1",
+      profile: "rino-rpc-v1",
       encrypted_secrets_base64: ciphertext,
       access: {
         Logic: {
@@ -300,7 +300,7 @@ afterEach(() => {
     rmSync(root, { recursive: true, force: true });
 });
 function cliFixture(mode = "ok") {
-  const root = mkdtempSync(join(tmpdir(), "proofcredit-secrets-test-"));
+  const root = mkdtempSync(join(tmpdir(), "rino-secrets-test-"));
   roots.push(root);
   mkdirSync(join(root, "tooling"));
   mkdirSync(join(root, ".local/rpc"), { recursive: true });
@@ -384,7 +384,7 @@ describe("CLI with isolated synthetic credentials", () => {
     expect(JSON.parse(parsed.options.body)).toEqual({
       accessor: { type: "WasmHash", hash },
       owner,
-      profile: "proofcredit-rpc-v1",
+      profile: "rino-rpc-v1",
       secrets_json: '{"ALCHEMY_API_KEY":""}',
     });
     const path = join(root, ".local/encrypted/args.json");

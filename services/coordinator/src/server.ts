@@ -87,7 +87,9 @@ export async function createApp(options: {
           "Public OutLayer/MPC, two fixed RPC operators and developer account keys remain trusted",
         ],
     termSeconds: engine ? "120" : "86400",
-    artifactHashes: { ...PINS },
+    artifactHashes: {
+      ...(engine ? PINS : (publicEngine?.artifactHashes ?? PINS)),
+    },
   };
   app.addHook("onRequest", async (req, reply) => {
     if (req.headers.host !== new URL(options.origin).host) {
@@ -159,7 +161,7 @@ export async function createApp(options: {
           host: req.headers.host ?? "",
           origin: String(req.headers.origin ?? ""),
           contentType: String(req.headers["content-type"] ?? ""),
-          csrf: String(req.headers["x-proofcredit-csrf"] ?? ""),
+          csrf: String(req.headers["x-rino-csrf"] ?? ""),
           expectedOrigin: options.origin,
           expectedCsrf: token,
           body: req.body,
@@ -221,7 +223,7 @@ export async function createApp(options: {
           host: req.headers.host ?? "",
           origin: String(req.headers.origin ?? ""),
           contentType: String(req.headers["content-type"] ?? ""),
-          csrf: String(req.headers["x-proofcredit-csrf"] ?? ""),
+          csrf: String(req.headers["x-rino-csrf"] ?? ""),
           expectedOrigin: options.origin,
           expectedCsrf: token,
           body: req.body,
@@ -260,19 +262,19 @@ export async function runServer() {
   const port = Number(process.env.PORT ?? 3000);
   if (!Number.isInteger(port) || port < 1024 || port > 65535)
     throw Error("invalid local port");
-  const mode = process.env.PROOFCREDIT_MODE ?? "public";
+  const mode = process.env.RINO_MODE ?? "public";
   if (!["local", "public"].includes(mode))
     throw Error("explicit local/public mode required");
   const engine =
     mode === "local"
       ? await LocalCoordinator.open(
-          await loadManifest(process.env.PROOFCREDIT_SESSION ?? ""),
+          await loadManifest(process.env.RINO_SESSION ?? ""),
         )
       : undefined;
-  if (process.env.PROOFCREDIT_LAB_FAULT) {
+  if (process.env.RINO_LAB_FAULT) {
     if (
       !engine ||
-      process.env.PROOFCREDIT_LAB_FAULT !== "lost-broadcast-response-once"
+      process.env.RINO_LAB_FAULT !== "lost-broadcast-response-once"
     )
       throw Error("local lab fault configuration rejected");
     engine.labLoseNextBroadcastResponse = true;
@@ -280,9 +282,7 @@ export async function runServer() {
   const origin = `http://127.0.0.1:${port}`;
   const publicEngine =
     mode === "public"
-      ? await PublicCoordinator.fromFile(
-          process.env.PROOFCREDIT_PUBLIC_MANIFEST,
-        )
+      ? await PublicCoordinator.fromFile(process.env.RINO_PUBLIC_MANIFEST)
       : undefined;
   const app = await createApp({ engine, publicEngine, origin });
   const stop = async () => {
@@ -299,7 +299,7 @@ export async function runServer() {
       JSON.stringify({ pid: process.pid, url: origin }),
       { mode: 0o600 },
     );
-  console.log(`ProofCredit coordinator ready ${origin}`);
+  console.log(`Rino coordinator ready ${origin}`);
 }
 if (
   process.argv[1] &&

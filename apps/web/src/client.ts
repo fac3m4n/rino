@@ -6,7 +6,7 @@ import type {
   Role,
   State,
   OperationView,
-} from "@proofcredit/coordinator/api";
+} from "@rino/coordinator/api";
 import { parseOperations } from "./operation-client";
 export const GET_TIMEOUT_MS = 15000;
 export const ACTION_TIMEOUT_MS = 180000;
@@ -112,7 +112,7 @@ export function submitAction(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-ProofCredit-CSRF": config.csrfToken,
+        "X-Rino-CSRF": config.csrfToken,
       },
       body: JSON.stringify({ action, role }),
     },
@@ -131,7 +131,7 @@ export function postApi<T>(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-ProofCredit-CSRF": config.csrfToken,
+        "X-Rino-CSRF": config.csrfToken,
       },
       body: JSON.stringify(body),
     },

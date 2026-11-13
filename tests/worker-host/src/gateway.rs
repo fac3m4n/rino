@@ -142,7 +142,7 @@ async fn forward_checked(
                 (Some("ethereum-sepolia-rpc.publicnode.com"), Some("/"))
                     | (
                         Some("eth-sepolia.g.alchemy.com"),
-                        Some("/v2/proofcredit-local-test-key")
+                        Some("/v2/rino-local-test-key")
                     )
             ),
         "gateway destination denied"

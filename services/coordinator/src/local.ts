@@ -31,30 +31,30 @@ import type {
 } from "./api.ts";
 export const PINS = {
   collateral:
-    "fbd5e0664aa18b3fe11f07d383cfbb73ef9eeff9d7747f623b33f09c4570f96e",
+    "3828a8e08162e4dd28a4e69981a29fc2ba2412a91735b62e5e4b00c642be5eec",
   settlement:
-    "a0efb7959a1f227d7e81579820bf3b3cec9804d94e5095fa6a90b301052e19c7",
+    "11a8f330d8f6698c9e644230d37e86ebb7c985d77a697b05934a0bf482404758",
   controller:
-    "f46bb1dedeca51f8f7820d5c74e30e0484421299adb3d6715545741ad1115497",
+    "fca67033f7ab648c105e28063797d9c07a317e487e626cb040fc089af46e0779",
 };
 const MOCK_MODULE = resolve(
   ROOT,
-  "target/financial-services/wasm32-unknown-unknown/release/proofcredit_financial_services.wasm",
+  "target/financial-services/wasm32-unknown-unknown/release/rino_financial_services.wasm",
 );
 const MOCK_PIN =
-  "04bd27d161d523e1a4f1d1c352dd0167fbdc94a8e792b3fcb611532be0d1b602";
+  "948e78435038ae764191b26d982ead06a80fbcc91d6b2d9e37b4f360517be18e";
 export const MODULES = {
   collateral: resolve(
     ROOT,
-    "target/wasm32-wasip2/release/proofcredit-proof-worker.wasm",
+    "target/wasm32-wasip2/release/rino-proof-worker.wasm",
   ),
   settlement: resolve(
     ROOT,
-    "target/wasm32-wasip2/release/proofcredit-settlement-worker.wasm",
+    "target/wasm32-wasip2/release/rino-settlement-worker.wasm",
   ),
   controller: resolve(
     ROOT,
-    "target/wasm32-unknown-unknown/release/proofcredit_controller.wasm",
+    "target/wasm32-unknown-unknown/release/rino_controller.wasm",
   ),
 };
 function rejectionReason(value: any): string | null {
@@ -114,14 +114,11 @@ export class LocalCoordinator {
           mock: await hashFile(
             resolve(
               ROOT,
-              "target/financial-services/wasm32-unknown-unknown/release/proofcredit_financial_services.wasm",
+              "target/financial-services/wasm32-unknown-unknown/release/rino_financial_services.wasm",
             ),
           ),
           host: await hashFile(
-            resolve(
-              ROOT,
-              "target/worker-host-native/debug/proofcredit-worker-host",
-            ),
+            resolve(ROOT, "target/worker-host-native/debug/rino-worker-host"),
           ),
           anvil: await hashFile(resolve(ROOT, ".tools/anvil/1.7.1/anvil")),
           sandbox: await hashFile(
@@ -136,7 +133,7 @@ export class LocalCoordinator {
     const services = await readFile(
       resolve(
         ROOT,
-        "target/financial-services/wasm32-unknown-unknown/release/proofcredit_financial_services.wasm",
+        "target/financial-services/wasm32-unknown-unknown/release/rino_financial_services.wasm",
       ),
     );
     for (const id of ["executor", "mpc"]) {
@@ -322,7 +319,7 @@ export class LocalCoordinator {
       reportPath = resolve(this.manifest.dir, `${id}-host.json`);
     await writeFile(inputPath, input, { mode: 0o600 });
     const child = this.children.spawn(
-      resolve(ROOT, "target/worker-host-native/debug/proofcredit-worker-host"),
+      resolve(ROOT, "target/worker-host-native/debug/rino-worker-host"),
       [
         "--module",
         MODULES[kind],
@@ -422,7 +419,7 @@ export class LocalCoordinator {
       const digest = s.current_intent?.signing_digest;
       if (
         record.deposit !== "1" ||
-        args.request?.path !== "proofcredit:sepolia:v1:0" ||
+        args.request?.path !== "rino:sepolia:v1:0" ||
         args.request.domain_id !== 0 ||
         !digest ||
         args.request.payload_v2?.Ecdsa !== digest.slice(2)

@@ -13,10 +13,10 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 ARTIFACTS = [
-    'wasm32-wasip2/release/proofcredit-proof-worker.wasm',
-    'wasm32-wasip2/release/proofcredit-settlement-worker.wasm',
-    'wasm32-unknown-unknown/release/proofcredit_controller.wasm',
-    'wasm32-unknown-unknown/release/proofcredit_pipeline_services.wasm',
+    'wasm32-wasip2/release/rino-proof-worker.wasm',
+    'wasm32-wasip2/release/rino-settlement-worker.wasm',
+    'wasm32-unknown-unknown/release/rino_controller.wasm',
+    'wasm32-unknown-unknown/release/rino_pipeline_services.wasm',
 ]
 
 

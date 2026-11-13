@@ -2649,7 +2649,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "proofcredit-collateral-proof"
+name = "rino-collateral-proof"
 version = "0.1.0"
 dependencies = [
  "rlp 0.5.2",
@@ -2657,22 +2657,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "proofcredit-controller"
+name = "rino-controller"
 version = "0.1.0"
 dependencies = [
  "k256",
  "near-contract-standards",
  "near-sdk",
- "proofcredit-loan-core",
- "proofcredit-proof-protocol",
- "proofcredit-settlement-protocol",
+ "rino-loan-core",
+ "rino-proof-protocol",
+ "rino-settlement-protocol",
  "serde",
  "serde_json",
  "url",
 ]
 
 [[package]]
-name = "proofcredit-loan-core"
+name = "rino-loan-core"
 version = "0.1.0"
 dependencies = [
  "borsh",
@@ -2685,16 +2685,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "proofcredit-proof-pipeline"
+name = "rino-proof-pipeline"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "near-api",
  "near-sandbox",
  "near-sdk",
- "proofcredit-controller",
- "proofcredit-proof-protocol",
- "proofcredit-proof-worker",
+ "rino-controller",
+ "rino-proof-protocol",
+ "rino-proof-worker",
  "reqwest",
  "rlp 0.5.2",
  "serde_json",
@@ -2703,33 +2703,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "proofcredit-proof-protocol"
+name = "rino-proof-protocol"
 version = "0.1.0"
 dependencies = [
- "proofcredit-collateral-proof",
+ "rino-collateral-proof",
  "serde",
  "serde_json",
  "sha2 0.10.9",
 ]
 
 [[package]]
-name = "proofcredit-proof-worker"
+name = "rino-proof-worker"
 version = "0.1.0"
 dependencies = [
- "proofcredit-proof-protocol",
+ "rino-proof-protocol",
  "serde",
  "serde_json",
  "wasi 0.13.3+wasi-0.2.2",
 ]
 
 [[package]]
-name = "proofcredit-settlement-protocol"
+name = "rino-settlement-protocol"
 version = "0.1.0"
 dependencies = [
  "hex",
- "proofcredit-collateral-proof",
- "proofcredit-loan-core",
- "proofcredit-proof-protocol",
+ "rino-collateral-proof",
+ "rino-loan-core",
+ "rino-proof-protocol",
  "serde",
  "serde_json",
  "sha2 0.10.9",

@@ -1,8 +1,8 @@
 import type { NearConnector, EventMap } from "@hot-labs/near-connect";
-import type { Config } from "@proofcredit/coordinator/api";
+import type { Config } from "@rino/coordinator/api";
 import type { Address, EIP1193Provider } from "viem";
 
-export const NEAR_HINT_KEY = "proofcredit.wallet.near.v1";
+export const NEAR_HINT_KEY = "rino.wallet.near.v1";
 type Hint = {
   version: 1;
   networkId: "testnet";

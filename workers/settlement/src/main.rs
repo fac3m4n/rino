@@ -1,4 +1,4 @@
-use proofcredit_settlement_worker::{run_entry, WasiTransport};
+use rino_settlement_worker::{run_entry, WasiTransport};
 fn main() {
     #[cfg(target_os = "wasi")]
     let now = wasi::clocks::wall_clock::now().seconds;

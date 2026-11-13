@@ -53,7 +53,7 @@ export class SnapshotLane<T> {
   }
 }
 
-import type { ActionName } from "@proofcredit/coordinator/api";
+import type { ActionName } from "@rino/coordinator/api";
 import type { Snapshot } from "./client";
 export function mutationObserved(
   action: ActionName,

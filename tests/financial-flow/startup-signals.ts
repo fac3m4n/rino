@@ -30,8 +30,8 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     [resolve(ROOT, "services/coordinator/src/supervisor.ts")],
     {
       ...process.env,
-      PROOFCREDIT_LAB_STARTUP_PAUSE: "after-anvil",
-      PROOFCREDIT_MODE: "local",
+      RINO_LAB_STARTUP_PAUSE: "after-anvil",
+      RINO_MODE: "local",
     },
   );
   const exited = new Promise<void>((r) =>
@@ -47,10 +47,10 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
         master.stdout!.on("data", (b: Buffer) => {
           buffer += b.toString();
           for (const line of buffer.split("\n"))
-            if (line.startsWith("ProofCredit lab startup paused ")) {
+            if (line.startsWith("Rino lab startup paused ")) {
               resolveMarker(
                 JSON.parse(
-                  line.slice("ProofCredit lab startup paused ".length),
+                  line.slice("Rino lab startup paused ".length),
                 ),
               );
               return;

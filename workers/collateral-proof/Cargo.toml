@@ -1,11 +1,11 @@
 [package]
-name = "proofcredit-proof-worker"
+name = "rino-proof-worker"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [dependencies]
-proofcredit-proof-protocol = { path = "../../crates/proof-protocol" }
+rino-proof-protocol = { path = "../../crates/proof-protocol" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 

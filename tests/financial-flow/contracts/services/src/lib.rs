@@ -44,7 +44,7 @@ impl Services {
     ) -> String {
         assert_eq!(env::predecessor_account_id(), self.controller);
         assert_eq!(predecessor, self.controller);
-        assert_eq!(path, "proofcredit:sepolia:v1:0");
+        assert_eq!(path, "rino:sepolia:v1:0");
         assert_eq!(domain_id, 0);
         self.public_key.clone()
     }

@@ -1,6 +1,6 @@
 # OutLayer Ethereum proof reference
 
-Trie traversal and Keccak usage are adapted from `out-layer/eth-proof-example`, commit `a5c8a869ec507547c3eb174097e73c5f73e1008e`, `src/mpt.rs` Git blob `d87b27841308cf9d3227198fe31c32e8c86e56fb`. ProofCredit adds strict account decoding, canonical encoding/path checks, complete payload consumption, proof bounds and test cases. The reference is dual-licensed MIT OR Apache-2.0; this adaptation uses the MIT option. Dependencies retain their own licenses in their crate packages.
+Trie traversal and Keccak usage are adapted from `out-layer/eth-proof-example`, commit `a5c8a869ec507547c3eb174097e73c5f73e1008e`, `src/mpt.rs` Git blob `d87b27841308cf9d3227198fe31c32e8c86e56fb`. Rino adds strict account decoding, canonical encoding/path checks, complete payload consumption, proof bounds and test cases. The reference is dual-licensed MIT OR Apache-2.0; this adaptation uses the MIT option. Dependencies retain their own licenses in their crate packages.
 
 Upstream source: <https://github.com/out-layer/eth-proof-example/tree/a5c8a869ec507547c3eb174097e73c5f73e1008e>
 

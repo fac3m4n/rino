@@ -2,11 +2,11 @@
 mod common;
 #[path = "common/tls.rs"]
 mod tls;
-use proofcredit_worker_host::{Adapter, LocalSandbox, Runner, transport::Hooks};
+use rino_worker_host::{Adapter, LocalSandbox, Runner, transport::Hooks};
 use serde_json::Value;
 use std::{sync::atomic::Ordering, time::Duration};
 fn runner() -> Runner {
-    Runner::new("../../target/wasm32-wasip2/release/proofcredit-proof-worker.wasm").unwrap()
+    Runner::new("../../target/wasm32-wasip2/release/rino-proof-worker.wasm").unwrap()
 }
 fn adapter(f: &tls::Fixture) -> Adapter {
     Adapter::LocalSandbox(LocalSandbox {
@@ -15,7 +15,7 @@ fn adapter(f: &tls::Fixture) -> Adapter {
         owned_near_unix_seconds: 10000,
     })
 }
-fn assert_streams_only(out: &proofcredit_worker_host::RunOutput) {
+fn assert_streams_only(out: &rino_worker_host::RunOutput) {
     assert_eq!(out.http_resources_after, 0);
     assert!(
         out.resource_kinds_after
@@ -44,7 +44,7 @@ async fn canonical_guest_accepts_valid_quorum_over_verified_tls() {
         "verified"
     );
     assert!(out.stderr.is_empty());
-    assert!(!String::from_utf8_lossy(&out.stdout).contains("proofcredit-local-test-key"));
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("rino-local-test-key"));
     assert!(
         fixture
             .requests
@@ -53,7 +53,7 @@ async fn canonical_guest_accepts_valid_quorum_over_verified_tls() {
             .iter()
             .skip(3)
             .all(
-                |header| header.starts_with("POST /v2/proofcredit-local-test-key HTTP/1.1\r\n")
+                |header| header.starts_with("POST /v2/rino-local-test-key HTTP/1.1\r\n")
                     && header
                         .to_ascii_lowercase()
                         .contains("host: eth-sepolia.g.alchemy.com\r\n")
@@ -249,8 +249,7 @@ async fn wrong_san_and_untrusted_ca_reject_before_any_http_request() {
 #[tokio::test]
 async fn canonical_settlement_guest_proves_nonzero_nonce_preparation_over_real_tls() {
     let runner =
-        Runner::new("../../target/wasm32-wasip2/release/proofcredit-settlement-worker.wasm")
-            .unwrap();
+        Runner::new("../../target/wasm32-wasip2/release/rino-settlement-worker.wasm").unwrap();
     let mut r = common::fixture_nonce(7);
     r["policy_id"] = serde_json::json!("rpc-finalized-2of2-settlement-v1");
     r["generation"] = serde_json::json!("3");

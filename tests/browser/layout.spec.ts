@@ -34,7 +34,7 @@ test("@layout fixture-only responsive dashboard and keyboard evidence drawer", a
     ),
   ).toBe(true);
   await page.screenshot({
-    path: `.cache/proofcredit-browser/fixture-${info.project.name}.png`,
+    path: `.cache/rino-browser/fixture-${info.project.name}.png`,
     fullPage: true,
   });
   await page

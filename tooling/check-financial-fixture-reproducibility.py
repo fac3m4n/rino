@@ -28,19 +28,19 @@ for location in ["source-a", "a-different-directory/source-b"]:
                RUSTUP_TOOLCHAIN="1.99.1", CARGO_TARGET_DIR=str(stage / "target"))
     cargo = ROOT / ".tools/rustup/toolchains/1.99.1-aarch64-apple-darwin/bin/cargo"
     env["PATH"] = str(cargo.parent) + os.pathsep + env["PATH"]
-    flags = [f"--remap-path-prefix={ROOT}=/proofcredit",
+    flags = [f"--remap-path-prefix={ROOT}=/rino",
              f"--remap-path-prefix={env['CARGO_HOME']}=/cargo-home", "--cfg", "near",
-             f"--remap-path-prefix={stage}=/proofcredit/tests/financial-flow/contracts/services"]
+             f"--remap-path-prefix={stage}=/rino/tests/financial-flow/contracts/services"]
     env["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(flags)
     env.pop("RUSTFLAGS", None)
     command = [str(cargo), "build", "--manifest-path", str(stage / "Cargo.toml"),
                "--target", "wasm32-unknown-unknown", "--release", "--locked", "--offline"]
     subprocess.run(command, cwd=ROOT, env=env, check=True)
-    artifact = stage / "target/wasm32-unknown-unknown/release/proofcredit_financial_services.wasm"
+    artifact = stage / "target/wasm32-unknown-unknown/release/rino_financial_services.wasm"
     data = artifact.read_bytes()
     records.append({"source": str(stage), "artifact": str(artifact), "bytes": len(data),
                     "sha256": sha(data), "flags": flags, "command": command})
-canonical = ROOT / "target/financial-services/wasm32-unknown-unknown/release/proofcredit_financial_services.wasm"
+canonical = ROOT / "target/financial-services/wasm32-unknown-unknown/release/rino_financial_services.wasm"
 actual = canonical.read_bytes()
 result = {"status": "PASS" if records[0]["sha256"] == records[1]["sha256"] == sha(actual) else "FAIL",
           "sources": {name: sha(data) for name, data in snapshot.items()}, "builds": records,

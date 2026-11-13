@@ -1,7 +1,7 @@
 /** Static UI fixtures only; these do not establish public transaction success. */
 import { expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { Config, Receipt } from "@proofcredit/coordinator/api";
+import type { Config, Receipt } from "@rino/coordinator/api";
 import { TransactionLink } from "../src/TransactionLink";
 import { ActivityTable } from "../src/ActivityTable";
 import { OperationPanel } from "../src/OperationPanel";

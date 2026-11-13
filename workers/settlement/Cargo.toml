@@ -1,13 +1,13 @@
 [package]
-name = "proofcredit-settlement-worker"
+name = "rino-settlement-worker"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [dependencies]
-proofcredit-settlement-protocol = { path = "../../crates/settlement-protocol" }
-proofcredit-proof-worker = { path = "../collateral-proof" }
-proofcredit-proof-protocol = { path = "../../crates/proof-protocol" }
+rino-settlement-protocol = { path = "../../crates/settlement-protocol" }
+rino-proof-worker = { path = "../collateral-proof" }
+rino-proof-protocol = { path = "../../crates/proof-protocol" }
 serde_json = "=1.0.154"
 
 [target.'cfg(target_os = "wasi")'.dependencies]

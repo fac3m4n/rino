@@ -1,13 +1,13 @@
 [package]
-name = "proofcredit-settlement-protocol"
+name = "rino-settlement-protocol"
 version = "0.1.0"
 edition = "2021"
 publish = false
 
 [dependencies]
-proofcredit-collateral-proof = { path = "../collateral-proof" }
-proofcredit-proof-protocol = { path = "../proof-protocol" }
-proofcredit-loan-core = { path = "../loan-core" }
+rino-collateral-proof = { path = "../collateral-proof" }
+rino-proof-protocol = { path = "../proof-protocol" }
+rino-loan-core = { path = "../loan-core" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 sha2 = "=0.10.9"

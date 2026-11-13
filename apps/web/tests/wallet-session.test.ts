@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import type { Config } from "@proofcredit/coordinator/api";
+import type { Config } from "@rino/coordinator/api";
 import type { NearConnector } from "@hot-labs/near-connect";
 import {
   WalletSession,

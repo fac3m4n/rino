@@ -6,7 +6,7 @@
 // Block timestamp: 0x6af4ea58
 // Finality: not checked; offline fixture only, not a controlled vault
 // Header/root authenticity is not independently established by this capture.
-// This public zero address is not a ProofCredit-controlled vault.
+// This public zero address is not a Rino-controlled vault.
 // Strings are original RPC data, not produced by the verifier under test.
 
 pub const STATE_ROOT: &str = "0x2a62159f4af9300d52c024de3433b859c0f47b6101a9711b375b70ff99920cc4";

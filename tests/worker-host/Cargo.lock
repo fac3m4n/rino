@@ -1107,7 +1107,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "proofcredit-worker-host"
+name = "rino-worker-host"
 version = "0.1.0"
 dependencies = [
  "anyhow",

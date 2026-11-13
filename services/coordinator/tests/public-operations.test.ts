@@ -665,7 +665,7 @@ import { writeFile } from "node:fs/promises";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { keccak256, parseTransaction, serializeTransaction } from "viem";
 import { PublicCoordinator } from "../src/public.ts";
-import { PINS } from "../src/local.ts";
+import { REVIEWED_V2_ARTIFACTS as PINS } from "../src/public-artifacts.ts";
 /** Throwaway synthetic key only, never funded and never sent to a network. */
 async function adapterFixture() {
   vi.stubEnv("NEAR_TESTNET_RPC_URL", undefined);

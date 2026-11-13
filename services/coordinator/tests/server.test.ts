@@ -30,7 +30,7 @@ it("public mode returns precise readiness without fixture state or keys and reje
     const good = {
       host: "127.0.0.1:3000",
       origin: "http://127.0.0.1:3000",
-      "x-proofcredit-csrf": config.csrfToken,
+      "x-rino-csrf": config.csrfToken,
       "content-type": "application/json",
     };
     expect(
@@ -53,7 +53,7 @@ it("public mode returns precise readiness without fixture state or keys and reje
         { action: "borrow", role: "borrower" },
       ],
       [
-        { ...good, "x-proofcredit-csrf": "" },
+        { ...good, "x-rino-csrf": "" },
         { action: "borrow", role: "borrower" },
       ],
       [good, { action: "settle", role: "borrower", url: "https://evil.test" }],

@@ -1,4 +1,4 @@
-use proofcredit_collateral_proof::{verify_account, AccountState, ProofError};
+use rino_collateral_proof::{verify_account, AccountState, ProofError};
 
 mod capture {
     include!("fixtures/sepolia_account.rs");

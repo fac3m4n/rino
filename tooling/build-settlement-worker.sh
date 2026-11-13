@@ -4,8 +4,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 source "$ROOT/tooling/proof-artifact-env.sh"
 STAGE="$(python3 "$ROOT/tooling/prepare-proof-artifact.py" settlement)"
-export CARGO_ENCODED_RUSTFLAGS+=$'\x1f'"--remap-path-prefix=$STAGE=/proofcredit"
-cargo build --manifest-path "$STAGE/Cargo.toml" --package proofcredit-settlement-worker --locked --offline --target wasm32-wasip2 --release
+export CARGO_ENCODED_RUSTFLAGS+=$'\x1f'"--remap-path-prefix=$STAGE=/rino"
+cargo build --manifest-path "$STAGE/Cargo.toml" --package rino-settlement-worker --locked --offline --target wasm32-wasip2 --release
 python3 "$ROOT/tooling/prepare-proof-artifact.py" settlement --verify
 python3 - <<'PY'
 from pathlib import Path
@@ -13,7 +13,7 @@ import hashlib,json,os,subprocess
 root=Path.cwd()
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 def command(*args):return subprocess.check_output(args,text=True).strip()
-artifact=root/'target/wasm32-wasip2/release/proofcredit-settlement-worker.wasm'
+artifact=root/'target/wasm32-wasip2/release/rino-settlement-worker.wasm'
 sources=[]
 for directory in ['workers/settlement','workers/collateral-proof','crates/settlement-protocol','crates/loan-core','crates/proof-protocol','crates/collateral-proof']:
  for p in sorted((root/directory).rglob('*')):
@@ -34,10 +34,10 @@ manifest={
  'toolchain':'1.99.1','target':'wasm32-wasip2',
  'build_command':'./tooling/build-settlement-worker.sh (environment and exact rustc flags recorded below)',
  'rustc_flags':os.environ['CARGO_ENCODED_RUSTFLAGS'].split('\x1f'),
- 'stable_path_mapping':{'checkout_root':'/proofcredit','canonical_cargo_home':'/cargo-home','build_source_stage':'/proofcredit','precedence':'last matching prefix wins; stage mapping last'},
+ 'stable_path_mapping':{'checkout_root':'/rino','canonical_cargo_home':'/cargo-home','build_source_stage':'/rino','precedence':'last matching prefix wins; stage mapping last'},
  'build_source_preparation':'python3 tooling/prepare-proof-artifact.py settlement; minimal ignored build-only workspace with original source files and unchanged package lockfile',
  'build_source_derivation':json.loads((root/'.cache/proof-artifact-sources/settlement/derivation.json').read_text()),
- 'cargo_command':['cargo','build','--manifest-path','.cache/proof-artifact-sources/settlement/Cargo.toml','--package','proofcredit-settlement-worker','--locked','--offline','--target','wasm32-wasip2','--release'],
+ 'cargo_command':['cargo','build','--manifest-path','.cache/proof-artifact-sources/settlement/Cargo.toml','--package','rino-settlement-worker','--locked','--offline','--target','wasm32-wasip2','--release'],
  'reproduce':'./tooling/build-settlement-worker.sh',
  'wasi_bindings':'0.13.3+wasi-0.2.2',
  'providers':[{'id':'publicnode','url':'https://ethereum-sepolia-rpc.publicnode.com'},{'id':'alchemy','url':'https://eth-sepolia.g.alchemy.com'}],

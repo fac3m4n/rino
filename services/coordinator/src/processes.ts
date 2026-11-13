@@ -257,7 +257,7 @@ export async function startStack(
       options.sandboxBinary ??
         resolve(
           ROOT,
-          "target/financial-flow-native/debug/proofcredit-financial-sandbox",
+          "target/financial-flow-native/debug/rino-financial-sandbox",
         ),
       [signerPath],
       env,

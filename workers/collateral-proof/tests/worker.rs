@@ -1,7 +1,5 @@
-use proofcredit_proof_protocol::{request_digest, ProofEvidence, MAX_INPUT_BYTES, MAX_RPC_BYTES};
-use proofcredit_proof_worker::{
-    run_entry, run_worker, Provider, RpcResponse, RpcTransport, WorkerError,
-};
+use rino_proof_protocol::{request_digest, ProofEvidence, MAX_INPUT_BYTES, MAX_RPC_BYTES};
+use rino_proof_worker::{run_entry, run_worker, Provider, RpcResponse, RpcTransport, WorkerError};
 use rlp::RlpStream;
 use serde_json::{json, Value};
 use std::{
@@ -245,7 +243,7 @@ fn entry_bounds_stdin_and_separates_diagnostics() {
 }
 #[test]
 fn binary_emits_one_json_and_diagnostics_only_on_stderr() {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_proofcredit-proof-worker"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rino-proof-worker"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -265,7 +263,7 @@ fn binary_emits_one_json_and_diagnostics_only_on_stderr() {
 // Catches adapters that read unbounded remote bytes before checking the JSON size.
 #[test]
 fn rpc_reader_stops_at_overflow_sentinel_and_propagates_late_errors() {
-    use proofcredit_proof_worker::read_bounded;
+    use rino_proof_worker::read_bounded;
     let mut source = Counting { read: 0 };
     assert_eq!(
         read_bounded(&mut source, 262144, WorkerError::RpcTooLarge),

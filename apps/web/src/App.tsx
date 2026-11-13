@@ -18,7 +18,7 @@ import type {
   Role,
   State,
   OperationView,
-} from "@proofcredit/coordinator/api";
+} from "@rino/coordinator/api";
 import type { Address } from "viem";
 import {
   actionGuard,
@@ -58,7 +58,7 @@ import { TransactionLink } from "./TransactionLink";
 import {
   collateralShortfall,
   collateralSufficient,
-} from "@proofcredit/coordinator/collateral";
+} from "@rino/coordinator/collateral";
 
 const credit = (value?: string | null) =>
   value ? formatUnits(value, 6, 6) : "—";

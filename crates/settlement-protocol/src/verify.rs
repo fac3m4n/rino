@@ -1,9 +1,7 @@
 use crate::*;
-use proofcredit_collateral_proof::{
-    verify_account, MAX_NODE_BYTES, MAX_PROOF_BYTES, MAX_PROOF_NODES,
-};
-use proofcredit_loan_core::{verify_mpc_signature, TransferIntent};
-use proofcredit_proof_protocol::quantities::{format_u256, parse_u256};
+use rino_collateral_proof::{verify_account, MAX_NODE_BYTES, MAX_PROOF_BYTES, MAX_PROOF_NODES};
+use rino_loan_core::{verify_mpc_signature, TransferIntent};
+use rino_proof_protocol::quantities::{format_u256, parse_u256};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -68,7 +66,7 @@ impl TransferIntentDto {
     }
 }
 impl SignedTransactionDto {
-    pub fn from_native(s: &proofcredit_loan_core::SignedTransaction) -> Self {
+    pub fn from_native(s: &rino_loan_core::SignedTransaction) -> Self {
         Self {
             raw: encoded(&s.raw),
             hash: encoded(&s.hash),

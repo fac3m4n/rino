@@ -2,7 +2,7 @@
 mod common;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
-use proofcredit_worker_host::{
+use rino_worker_host::{
     Runner,
     transport::{IoFuture, SendFuture},
 };
@@ -119,8 +119,7 @@ impl WasiHttpHooks for Script {
 }
 #[tokio::test(start_paused = true)]
 async fn actual_guest_deadline_wins_when_each_readiness_source_is_simultaneously_eligible() {
-    let runner =
-        Runner::new("../../target/wasm32-wasip2/release/proofcredit-proof-worker.wasm").unwrap();
+    let runner = Runner::new("../../target/wasm32-wasip2/release/rino-proof-worker.wasm").unwrap();
     for phase in [Phase::Header, Phase::Body, Phase::Write] {
         for ns in [9_998_000_000, 10_000_000_000, 10_002_000_000] {
             let eligible = Arc::new(AtomicUsize::new(0));

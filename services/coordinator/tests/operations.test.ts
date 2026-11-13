@@ -45,7 +45,7 @@ const near = (methodName = "fund_liquidity"): ExpectedStep => ({
   },
 });
 async function fixture() {
-  const dir = await mkdtemp(join(tmpdir(), "proofcredit-operations-"));
+  const dir = await mkdtemp(join(tmpdir(), "rino-operations-"));
   dirs.push(dir);
   const path = join(dir, "operations.json");
   return { dir, path, journal: await OperationJournal.open(path, binding) };

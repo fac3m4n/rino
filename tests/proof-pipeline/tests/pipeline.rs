@@ -2,7 +2,7 @@
 use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use near_api::{Contract, NearGas, NearToken, NetworkConfig, Signer};
 use near_sandbox::{Sandbox, config::DEFAULT_GENESIS_ACCOUNT_PRIVATE_KEY};
-use proofcredit_proof_worker::{Provider, RpcResponse, RpcTransport, WorkerError, run_entry};
+use rino_proof_worker::{Provider, RpcResponse, RpcTransport, WorkerError, run_entry};
 use rlp::RlpStream;
 use serde_json::{Value, json};
 use std::{io::Cursor, path::PathBuf, sync::Arc, time::Duration};
@@ -11,7 +11,7 @@ use tokio::task::JoinHandle;
 
 const VAULT: &str = "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf";
 const DEPOSIT: &str = "50000000000000000000000";
-const HASH: &str = "fbd5e0664aa18b3fe11f07d383cfbb73ef9eeff9d7747f623b33f09c4570f96e";
+const HASH: &str = "3828a8e08162e4dd28a4e69981a29fc2ba2412a91735b62e5e4b00c642be5eec";
 const URL: &str = "https://example.invalid/proof-worker.wasm";
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -91,8 +91,7 @@ impl Harness {
     async fn new(case: &'static str) -> Result<Arc<Self>> {
         let sandbox =
             tokio::time::timeout(Duration::from_secs(40), Sandbox::start_sandbox()).await??;
-        let net =
-            NetworkConfig::from_rpc_url("proofcredit-local-sandbox", sandbox.rpc_addr.parse()?);
+        let net = NetworkConfig::from_rpc_url("rino-local-sandbox", sandbox.rpc_addr.parse()?);
         let signer = Signer::from_secret_key(DEFAULT_GENESIS_ACCOUNT_PRIVATE_KEY.parse()?)?;
         let h = Arc::new(Self {
             sandbox,
@@ -109,10 +108,9 @@ impl Harness {
                 .await?;
         }
         for name in ["executor", "mpc"] {
-            h.deploy(name, "proofcredit_pipeline_services.wasm").await?;
+            h.deploy(name, "rino_pipeline_services.wasm").await?;
         }
-        h.deploy("controller", "proofcredit_controller.wasm")
-            .await?;
+        h.deploy("controller", "rino_controller.wasm").await?;
         h.ok("controller","new",json!({"borrower":"borrower","executor":"executor","wasm_url":URL,"wasm_sha256":HASH,"operation_deposit":DEPOSIT,"network":{"Sandbox":{"mpc":"mpc"}}})).await?;
         Ok(h)
     }
@@ -481,7 +479,7 @@ async fn pinned_source_resources_and_budget_match_outbound_receipt() -> Result<(
     let mpc = h.view("mpc", "get_mpc_args").await?;
     assert_eq!(
         mpc,
-        json!({"path":"proofcredit:sepolia:v1:0","predecessor":"controller","domain_id":0})
+        json!({"path":"rino:sepolia:v1:0","predecessor":"controller","domain_id":0})
     );
     let (tx, r) = h.start(bundle(h.now().await?)).await?;
     assert_eq!(r["deposit"], DEPOSIT);
@@ -520,7 +518,7 @@ fn expired_state(now: u64) -> Vec<u8> {
         test_utils::VMContextBuilder,
         testing_env,
     };
-    use proofcredit_controller::{Controller, NetworkMode};
+    use rino_controller::{Controller, NetworkMode};
     fn ctx(who: &str, now: u64, results: Vec<PromiseResult>) {
         let context = VMContextBuilder::new()
             .current_account_id("controller".parse().unwrap())
@@ -621,7 +619,7 @@ async fn successful_deposit_failed_callback_recovers_after_real_expiry() -> Resu
     assert_eq!(r["deposit"], DEPOSIT);
     let pending = h.view("controller", "get_pending").await?;
     let saved = h.state_bytes().await?;
-    let saved_controller: proofcredit_controller::Controller = near_sdk::borsh::from_slice(&saved)?;
+    let saved_controller: rino_controller::Controller = near_sdk::borsh::from_slice(&saved)?;
     assert_eq!(saved_controller.get_pending().unwrap().request_id.0, 2);
     assert!(saved_controller.get_evidence().is_none());
     h.patch_state(b"deliberately-invalid-controller-state")

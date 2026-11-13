@@ -96,7 +96,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "proofcredit-collateral-proof"
+name = "rino-collateral-proof"
 version = "0.1.0"
 dependencies = [
  "rlp",
@@ -104,10 +104,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "proofcredit-proof-protocol"
+name = "rino-proof-protocol"
 version = "0.1.0"
 dependencies = [
- "proofcredit-collateral-proof",
+ "rino-collateral-proof",
  "rlp",
  "serde",
  "serde_json",

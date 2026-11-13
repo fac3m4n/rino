@@ -102,7 +102,7 @@ impl FungibleTokenMetadataProvider for Controller {
         self.token();
         FungibleTokenMetadata {
             spec: FT_METADATA_SPEC.into(),
-            name: "ProofCredit demo CREDIT (no redemption)".into(),
+            name: "Rino demo CREDIT (no redemption)".into(),
             symbol: "CREDIT".into(),
             icon: None,
             reference: None,

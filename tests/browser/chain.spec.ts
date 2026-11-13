@@ -2,11 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type {
-  ActionResult,
-  Receipt,
-  State,
-} from "@proofcredit/coordinator/api";
+import type { ActionResult, Receipt, State } from "@rino/coordinator/api";
 
 const root = resolve(import.meta.dirname, "../..");
 const origin = "http://127.0.0.1:3001";
@@ -154,7 +150,7 @@ for (const scenario of ["repay", "default", "cancel"] as const) {
       await action(page, "Borrow 100 CREDIT", "borrow");
       await expect(page.getByTestId("loan-debt")).toHaveText("101 CREDIT");
       await page.screenshot({
-        path: `.cache/proofcredit-browser/chain-${scenario}-${info.project.name}-active.png`,
+        path: `.cache/rino-browser/chain-${scenario}-${info.project.name}-active.png`,
         fullPage: true,
       });
       if (scenario === "repay") {
@@ -221,7 +217,7 @@ for (const scenario of ["repay", "default", "cancel"] as const) {
       expect(state.market?.borrower_balance_units).toBe("0");
     }
     await page.screenshot({
-      path: `.cache/proofcredit-browser/chain-${scenario}-${info.project.name}-complete.png`,
+      path: `.cache/rino-browser/chain-${scenario}-${info.project.name}-complete.png`,
       fullPage: true,
     });
     await page
@@ -229,7 +225,7 @@ for (const scenario of ["repay", "default", "cancel"] as const) {
       .click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.screenshot({
-      path: `.cache/proofcredit-browser/chain-${scenario}-${info.project.name}-evidence.png`,
+      path: `.cache/rino-browser/chain-${scenario}-${info.project.name}-evidence.png`,
       fullPage: true,
     });
     const serialized = JSON.stringify({ state, receipts });
@@ -238,13 +234,13 @@ for (const scenario of ["repay", "default", "cancel"] as const) {
     );
     expect(errors).toEqual([]);
     expect(networkErrors).toEqual([]);
-    await mkdir(resolve(root, ".cache/proofcredit-browser"), {
+    await mkdir(resolve(root, ".cache/rino-browser"), {
       recursive: true,
     });
     await writeFile(
       resolve(
         root,
-        `.cache/proofcredit-browser/chain-${scenario}-${info.project.name}-evidence.json`,
+        `.cache/rino-browser/chain-${scenario}-${info.project.name}-evidence.json`,
       ),
       JSON.stringify({ state, receipts, errors, networkErrors }, null, 2),
     );
@@ -292,14 +288,14 @@ test("@refill real withdrawn CREDIT can be restored without depositing more ETH"
   await action(page, "Borrow 100 CREDIT", "borrow");
   await expect(page.getByTestId("loan-debt")).toHaveText("101 CREDIT");
   await page.screenshot({
-    path: `.cache/proofcredit-browser/fix1-refill-active-${info.project.name}.png`,
+    path: `.cache/rino-browser/fix1-refill-active-${info.project.name}.png`,
     fullPage: true,
   });
-  await mkdir(resolve(root, ".cache/proofcredit-browser"), { recursive: true });
+  await mkdir(resolve(root, ".cache/rino-browser"), { recursive: true });
   await writeFile(
     resolve(
       root,
-      `.cache/proofcredit-browser/fix1-refill-${info.project.name}-evidence.json`,
+      `.cache/rino-browser/fix1-refill-${info.project.name}-evidence.json`,
     ),
     JSON.stringify(
       {
@@ -344,7 +340,7 @@ test("@partial real partial collateral is funded by delta, reauthenticated and b
   ]); // 0.05 ETH ordinary partial deposit, not setBalance.
   // General proof eligibility intentionally accepts any positive nonce-zero balance.
   const proof = await page.request.post(`${origin}/api/actions`, {
-    headers: { "X-ProofCredit-CSRF": config.csrfToken, Origin: origin },
+    headers: { "X-Rino-CSRF": config.csrfToken, Origin: origin },
     data: { action: "prove", role: "borrower" },
   });
   expect(proof.ok(), await proof.text()).toBe(true);
@@ -391,13 +387,13 @@ test("@partial real partial collateral is funded by delta, reauthenticated and b
   const included = await rpc("eth_getTransactionByHash", [funding.hash]);
   expect(BigInt(included.value)).toBe(70000000000000000n);
   await page.screenshot({
-    path: `.cache/proofcredit-browser/partial-${info.project.name}.png`,
+    path: `.cache/rino-browser/partial-${info.project.name}.png`,
     fullPage: true,
   });
   await writeFile(
     resolve(
       root,
-      `.cache/proofcredit-browser/partial-${info.project.name}-evidence.json`,
+      `.cache/rino-browser/partial-${info.project.name}-evidence.json`,
     ),
     JSON.stringify({ inadequate, topped, final, receipts, included }, null, 2),
   );

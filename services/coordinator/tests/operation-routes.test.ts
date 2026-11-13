@@ -133,7 +133,7 @@ it("guards every metadata write and persists acknowledgements before the next wa
       ...host,
       origin: "http://127.0.0.1:3002",
       "content-type": "application/json",
-      "x-proofcredit-csrf": config.csrfToken,
+      "x-rino-csrf": config.csrfToken,
     };
     const id = "12345678-1234-4234-8234-123456789abc",
       payload = { id, action: "borrow", role: "borrower" };
@@ -148,7 +148,7 @@ it("guards every metadata write and persists acknowledgements before the next wa
       (
         await post("/api/operations", payload, {
           ...headers,
-          "x-proofcredit-csrf": "wrong",
+          "x-rino-csrf": "wrong",
         })
       ).statusCode,
     ).toBe(400);
@@ -166,7 +166,7 @@ it("guards every metadata write and persists acknowledgements before the next wa
       "/api/operations/import",
     ]) {
       expect(
-        (await post(path, {}, { ...headers, "x-proofcredit-csrf": "wrong" }))
+        (await post(path, {}, { ...headers, "x-rino-csrf": "wrong" }))
           .statusCode,
       ).toBe(400);
       expect((await post(path, { extra: true })).statusCode).toBe(400);

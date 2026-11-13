@@ -1,5 +1,5 @@
 use near_sdk::{CurveType, PublicKey, env};
-pub const DERIVATION_PATH: &str = "proofcredit:sepolia:v1:0";
+pub const DERIVATION_PATH: &str = "rino:sepolia:v1:0";
 
 /// MPC JSON is a typed NEAR secp256k1 key; Ethereum hashes only its x/y bytes.
 pub fn derive_address(raw: &[u8]) -> Option<String> {

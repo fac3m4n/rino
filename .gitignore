@@ -20,7 +20,7 @@ submission-payload*.json
 idea-context.md
 # Preserve historical research locally; version the active build plan.
 /docs/*
-!/docs/proofcredit/
+!/docs/rino/
 scripts/
 
 # Local credentials, RPC endpoints and generated development artifacts.

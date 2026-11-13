@@ -1,5 +1,5 @@
 {
-  "name": "@proofcredit/coordinator",
+  "name": "@rino/coordinator",
   "version": "0.1.0",
   "private": true,
   "type": "module",

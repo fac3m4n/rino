@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, ensure};
-use proofcredit_worker_host::{Adapter, Runner, gateway::Gateway};
+use rino_worker_host::{Adapter, Runner, gateway::Gateway};
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
@@ -49,10 +49,9 @@ async fn run() -> Result<bool> {
                 !args.contains_key("--rpc-url") && !args.contains_key("--near-time"),
                 "Production forbids local RPC/clock overrides"
             );
-            let key = std::env::var("ALCHEMY_API_KEY").map_err(|_| {
-                anyhow::anyhow!(proofcredit_worker_host::transport::CREDENTIAL_ERROR)
-            })?;
-            proofcredit_worker_host::transport::alchemy_path(&key)?;
+            let key = std::env::var("ALCHEMY_API_KEY")
+                .map_err(|_| anyhow::anyhow!(rino_worker_host::transport::CREDENTIAL_ERROR))?;
+            rino_worker_host::transport::alchemy_path(&key)?;
             production_key = Some(key);
             None
         }

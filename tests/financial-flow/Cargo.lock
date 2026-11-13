@@ -1578,7 +1578,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "proofcredit-financial-sandbox"
+name = "rino-financial-sandbox"
 version = "0.1.0"
 dependencies = [
  "near-api",

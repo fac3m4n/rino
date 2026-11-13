@@ -1,4 +1,4 @@
-use proofcredit_proof_protocol::{quantities::*, *};
+use rino_proof_protocol::{quantities::*, *};
 use rlp::RlpStream;
 use serde_json::json;
 use tiny_keccak::{Hasher, Keccak};

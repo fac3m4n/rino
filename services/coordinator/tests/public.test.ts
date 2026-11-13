@@ -3,14 +3,14 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PublicCoordinator } from "../src/public.ts";
-import { PINS } from "../src/local.ts";
+import { REVIEWED_V2_ARTIFACTS as PINS } from "../src/public-artifacts.ts";
 import type { State } from "../src/api.ts";
 import { createApp } from "../src/server.ts";
 beforeEach(() => {
   vi.stubEnv("NEAR_TESTNET_RPC_URL", undefined);
   vi.stubEnv(
     "ALCHEMY_SEPOLIA_RPC_URL",
-    "https://eth-sepolia.g.alchemy.com/v2/proofcredit-synthetic-key",
+    "https://eth-sepolia.g.alchemy.com/v2/rino-synthetic-key",
   );
 });
 afterEach(() => {
@@ -31,7 +31,7 @@ const deployment = {
   settlementUrl: "https://published.example/settlement.wasm",
 };
 async function adapter(extra: Record<string, unknown> = {}) {
-  const dir = await mkdtemp(join(tmpdir(), "proofcredit-public-"));
+  const dir = await mkdtemp(join(tmpdir(), "rino-public-"));
   const p = join(dir, "manifest.json");
   await writeFile(p, JSON.stringify({ ...deployment, ...extra }));
   return PublicCoordinator.fromFile(p);
@@ -124,7 +124,7 @@ it("public readiness fails closed on wrong provider network or changed deployed 
   expect(await a.readiness()).toEqual([]);
   expect(fetch.mock.calls.map(([url]) => String(url))).toEqual([
     "https://ethereum-sepolia-rpc.publicnode.com/",
-    "https://eth-sepolia.g.alchemy.com/v2/proofcredit-synthetic-key",
+    "https://eth-sepolia.g.alchemy.com/v2/rino-synthetic-key",
   ]);
   expect(JSON.stringify(a.deployment)).not.toContain("synthetic-key");
   expect(JSON.stringify(a)).not.toContain("synthetic-key");
@@ -154,7 +154,7 @@ it("redacts credential-bearing provider exceptions from action and readiness err
   } as unknown as State);
   vi.spyOn(globalThis, "fetch").mockRejectedValue(
     new Error(
-      "transport https://eth-sepolia.g.alchemy.com/v2/proofcredit-synthetic-key",
+      "transport https://eth-sepolia.g.alchemy.com/v2/rino-synthetic-key",
     ),
   );
   await expect(a.action({ action: "prove", role: "borrower" })).rejects.toThrow(
@@ -164,7 +164,7 @@ it("redacts credential-bearing provider exceptions from action and readiness err
 it("keeps runtime credentials out of config and unavailable state API responses", async () => {
   const a = (await adapter())!;
   vi.spyOn(a.provider, "viewNodeStatus").mockRejectedValue(
-    new Error("https://eth-sepolia.g.alchemy.com/v2/proofcredit-synthetic-key"),
+    new Error("https://eth-sepolia.g.alchemy.com/v2/rino-synthetic-key"),
   );
   vi.spyOn(a.provider, "viewAccount").mockRejectedValue(
     new Error("unavailable"),

@@ -1,10 +1,10 @@
 /** Controlled SDK/provider boundaries; real App, hook and guards, no signing. */
 import { expect, test, type Page } from "@playwright/test";
 import { configFixture, stateFixture } from "../../apps/web/tests/fixtures";
-const borrower = "proofcredit-b-2593ce.testnet";
-const lender = "proofcredit-l-2593ce.testnet";
+const borrower = "rino-b-2593ce.testnet";
+const lender = "rino-l-2593ce.testnet";
 const evm = "0x1111111111111111111111111111111111111111";
-const hintKey = "proofcredit.wallet.near.v1";
+const hintKey = "rino.wallet.near.v1";
 const connected = (page: Page) =>
   page.getByRole("button", { name: borrower, exact: true });
 const prove = (page: Page) =>

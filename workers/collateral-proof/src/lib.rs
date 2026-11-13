@@ -1,5 +1,5 @@
 //! Bounded adapter for the fixed two-provider RPC trust policy.
-use proofcredit_proof_protocol::{
+use rino_proof_protocol::{
     parse_request, verify_request, CheckpointObservation, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES,
     MAX_RPC_BYTES,
 };

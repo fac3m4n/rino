@@ -10,7 +10,7 @@ import type { State } from "../src/api.ts";
 beforeEach(() =>
   vi.stubEnv(
     "ALCHEMY_SEPOLIA_RPC_URL",
-    "https://eth-sepolia.g.alchemy.com/v2/proofcredit-synthetic-key",
+    "https://eth-sepolia.g.alchemy.com/v2/rino-synthetic-key",
   ),
 );
 afterEach(() => {
@@ -19,7 +19,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 async function fixture(balance = "1") {
-  const dir = await mkdtemp(join(tmpdir(), "proofcredit-public-preparation-"));
+  const dir = await mkdtemp(join(tmpdir(), "rino-public-preparation-"));
   const manifest = join(dir, "manifest.json");
   await writeFile(
     manifest,
@@ -80,7 +80,7 @@ async function fixture(balance = "1") {
     expect(String(url)).toBe(
       provider === 0
         ? "https://ethereum-sepolia-rpc.publicnode.com/"
-        : "https://eth-sepolia.g.alchemy.com/v2/proofcredit-synthetic-key",
+        : "https://eth-sepolia.g.alchemy.com/v2/rino-synthetic-key",
     );
     const call = { provider, method: q.method, params: q.params };
     calls.push(call);

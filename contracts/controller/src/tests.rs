@@ -5,7 +5,7 @@ use near_sdk::{
     test_utils::{VMContextBuilder, get_created_receipts},
     testing_env,
 };
-use proofcredit_proof_protocol::{EMPTY_CODE_HASH, ProofRequest, request_digest};
+use rino_proof_protocol::{EMPTY_CODE_HASH, ProofRequest, request_digest};
 use serde_json::{Value, json};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 pub(super) const ADDRESS: &str = "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf";
@@ -36,7 +36,7 @@ fn config() -> Config {
         executor: id("executor.testnet"),
         mpc: id("mpc.testnet"),
         wasm_url: "https://example.com/worker.wasm".into(),
-        wasm_sha256: "fbd5e0664aa18b3fe11f07d383cfbb73ef9eeff9d7747f623b33f09c4570f96e".into(),
+        wasm_sha256: "3828a8e08162e4dd28a4e69981a29fc2ba2412a91735b62e5e4b00c642be5eec".into(),
         operation_deposit: U128(DEPOSIT),
         network: NetworkMode::Sandbox {
             mpc: id("mpc.testnet"),
@@ -240,7 +240,7 @@ fn derivation_reserves_before_call_and_binds_controller_identity() {
     assert_eq!(calls[0].0, "derived_public_key");
     assert_eq!(
         calls[0].1,
-        json!({"path":"proofcredit:sepolia:v1:0","predecessor":"controller.testnet","domain_id":0})
+        json!({"path":"rino:sepolia:v1:0","predecessor":"controller.testnet","domain_id":0})
     );
     assert_eq!(calls[0].2, 0);
     assert_eq!(calls[1].0, "on_vault_derived");
@@ -313,7 +313,7 @@ fn proof_call_pins_policy_source_resources_deposit_and_exact_input() {
     let args = &calls()[0].1;
     assert_eq!(
         args["source"],
-        json!({"WasmUrl":{"url":"https://example.com/worker.wasm","hash":"fbd5e0664aa18b3fe11f07d383cfbb73ef9eeff9d7747f623b33f09c4570f96e","build_target":"wasm32-wasip2"}})
+        json!({"WasmUrl":{"url":"https://example.com/worker.wasm","hash":"3828a8e08162e4dd28a4e69981a29fc2ba2412a91735b62e5e4b00c642be5eec","build_target":"wasm32-wasip2"}})
     );
     assert_eq!(
         args["resource_limits"],
@@ -347,7 +347,7 @@ fn testnet_initial_proof_derives_fixed_secret_profile_from_current_controller() 
         let args = &calls()[0].1;
         assert_eq!(
             args["secrets_ref"],
-            json!({"profile":"proofcredit-rpc-v1","account_id":account})
+            json!({"profile":"rino-rpc-v1","account_id":account})
         );
         assert_eq!(args["payer_account_id"], account);
         assert!(args["params"].is_null());

@@ -289,7 +289,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "proofcredit-collateral-proof"
+name = "rino-collateral-proof"
 version = "0.1.0"
 dependencies = [
  "rlp 0.5.2",
@@ -297,7 +297,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "proofcredit-loan-core"
+name = "rino-loan-core"
 version = "0.1.0"
 dependencies = [
  "borsh",
@@ -310,23 +310,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "proofcredit-proof-protocol"
+name = "rino-proof-protocol"
 version = "0.1.0"
 dependencies = [
- "proofcredit-collateral-proof",
+ "rino-collateral-proof",
  "serde",
  "serde_json",
  "sha2",
 ]
 
 [[package]]
-name = "proofcredit-settlement-protocol"
+name = "rino-settlement-protocol"
 version = "0.1.0"
 dependencies = [
  "hex",
- "proofcredit-collateral-proof",
- "proofcredit-loan-core",
- "proofcredit-proof-protocol",
+ "rino-collateral-proof",
+ "rino-loan-core",
+ "rino-proof-protocol",
  "rlp 0.5.2",
  "serde",
  "serde_json",

@@ -1,4 +1,4 @@
-import type { State, OperationView } from "@proofcredit/coordinator/api";
+import type { State, OperationView } from "@rino/coordinator/api";
 /** Automatic reads only. Action authority lives in SnapshotLane and the App. */
 export class ReadPoller {
   private timer?: ReturnType<typeof setTimeout>;

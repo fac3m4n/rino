@@ -120,13 +120,13 @@ await scenario("lost-broadcast-restart-historical", async (c) => {
   const serverEnv = {
     ...process.env,
     PORT: "3089",
-    PROOFCREDIT_MODE: "local",
-    PROOFCREDIT_SESSION: resolve(c.manifest.dir, "session-private.json"),
+    RINO_MODE: "local",
+    RINO_SESSION: resolve(c.manifest.dir, "session-private.json"),
   };
   const first = c.children.spawn(
     resolve("node_modules/.bin/tsx"),
     [serverPath],
-    { ...serverEnv, PROOFCREDIT_LAB_FAULT: "lost-broadcast-response-once" },
+    { ...serverEnv, RINO_LAB_FAULT: "lost-broadcast-response-once" },
   );
   let firstConfig: any;
   for (let i = 0; i < 100; i++) {
@@ -145,7 +145,7 @@ await scenario("lost-broadcast-restart-historical", async (c) => {
     headers: {
       origin: "http://127.0.0.1:3089",
       "content-type": "application/json",
-      "x-proofcredit-csrf": firstConfig.csrfToken,
+      "x-rino-csrf": firstConfig.csrfToken,
     },
     body: JSON.stringify({ action: "settle", role: "borrower" }),
   });
@@ -173,8 +173,8 @@ await scenario("lost-broadcast-restart-historical", async (c) => {
     {
       ...process.env,
       PORT: "3089",
-      PROOFCREDIT_MODE: "local",
-      PROOFCREDIT_SESSION: resolve(c.manifest.dir, "session-private.json"),
+      RINO_MODE: "local",
+      RINO_SESSION: resolve(c.manifest.dir, "session-private.json"),
     },
   );
   try {
@@ -194,7 +194,7 @@ await scenario("lost-broadcast-restart-historical", async (c) => {
       headers: {
         origin: "http://127.0.0.1:3089",
         "content-type": "application/json",
-        "x-proofcredit-csrf": config.csrfToken,
+        "x-rino-csrf": config.csrfToken,
       },
       body: JSON.stringify({ action: "recover", role: "borrower" }),
     });

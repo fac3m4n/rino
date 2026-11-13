@@ -4,7 +4,7 @@ use near_sdk::{
     json_types::{U64, U128},
     near,
 };
-use proofcredit_proof_protocol::{
+use rino_proof_protocol::{
     CHAIN_ID, MAX_INPUT_BYTES, MAX_OUTPUT_BYTES, MAX_REQUEST_LIFETIME_SECONDS, POLICY_ID,
     ProofBundle, ProofEvidence, ProofRequest, SCHEMA_VERSION, parse_request, request_digest,
     validate_evidence,

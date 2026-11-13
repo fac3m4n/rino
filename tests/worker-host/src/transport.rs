@@ -41,7 +41,7 @@ pub struct Hooks {
     gate: Duration,
     tiny: bool,
 }
-pub const LOCAL_ALCHEMY_KEY: &str = "proofcredit-local-test-key";
+pub const LOCAL_ALCHEMY_KEY: &str = "rino-local-test-key";
 pub const CREDENTIAL_ERROR: &str = "Alchemy credential missing or invalid";
 /// Separate host validation: no ambient environment is consulted by library APIs.
 pub fn alchemy_path(key: &str) -> Result<String> {

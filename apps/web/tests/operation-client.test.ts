@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import type { OperationView } from "@proofcredit/coordinator/api";
+import type { OperationView } from "@rino/coordinator/api";
 import {
   OperationClient,
   mergeOperations,
@@ -53,9 +53,7 @@ it("never opens a wallet request when submission-started acknowledgement is lost
 it("rotates CSRF only once for idempotent metadata with the same original operation", async () => {
   const requests: { url: string; token?: string }[] = [];
   vi.stubGlobal("fetch", async (url: unknown, init: RequestInit) => {
-    const token = (init.headers as Record<string, string>)[
-      "X-ProofCredit-CSRF"
-    ];
+    const token = (init.headers as Record<string, string>)["X-Rino-CSRF"];
     requests.push({ url: String(url), token });
     if (String(url).includes("config"))
       return Response.json({ ...config, csrfToken: "rotated" });
