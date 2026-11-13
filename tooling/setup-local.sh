@@ -29,5 +29,4 @@ for target in wasm32-unknown-unknown wasm32-wasip2; do
 done
 python3 tooling/install-local-binaries.py --verify-only
 node --input-type=module -e 'import { chromium } from "playwright"; import { access } from "node:fs/promises"; await access(chromium.executablePath()); console.log("Pinned Chromium cached:", chromium.executablePath());'
-python3 tooling/verify-superpowers.py
 printf 'Cached setup verified. Run ./tooling/check.sh --unit-build, then npm run dev:local.\n'

@@ -26,7 +26,6 @@ for manifest in workers/collateral-proof/Cargo.toml workers/settlement/Cargo.tom
 done
 RUSTFLAGS='--cfg near' cargo clippy --manifest-path contracts/controller/Cargo.toml --locked --offline --target wasm32-unknown-unknown -- -D warnings
 CARGO_TARGET_DIR="$ROOT/target/worker-host-native" cargo clippy --manifest-path tests/worker-host/Cargo.toml --locked --offline --all-targets --all-features -- -D warnings
-python3 tooling/verify-superpowers.py
 npm test
 npm run test:web
 npm run build
