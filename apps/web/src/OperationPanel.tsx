@@ -1,12 +1,15 @@
 import { useState } from "react";
 import type {
   ActionName,
+  Config,
   OperationView,
   Role,
 } from "@proofcredit/coordinator/api";
 import { validHash } from "./operation-client";
+import { TransactionLink } from "./TransactionLink";
 
 export function OperationPanel({
+  config,
   operations,
   disabled,
   onCheck,
@@ -15,6 +18,7 @@ export function OperationPanel({
   onImport,
   onError,
 }: {
+  config?: Config;
   operations: OperationView[];
   disabled: boolean;
   onCheck: (operation: OperationView) => Promise<void>;
@@ -99,7 +103,11 @@ export function OperationPanel({
                 )}
                 {step.hashes.map((hash) => (
                   <div key={hash.hash}>
-                    <code>{hash.hash}</code>
+                    <TransactionLink
+                      config={config}
+                      chain={step.chain}
+                      hash={hash.hash}
+                    />
                     <p>
                       {hash.status === "failed"
                         ? "Verified failure: "
