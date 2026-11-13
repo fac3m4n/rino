@@ -1,13 +1,19 @@
 /** Public testnet adapter. This module never constructs a signer; RPC credentials load only in public construction. */
 import { JsonRpcProvider } from "near-api-js";
 import { ReadCache } from "./read-cache.ts";
+import { createPublicNearProvider } from "./public-near-provider.ts";
+import { OperationJournal, type ExpectedStep } from "./operations.ts";
+import { PublicOperations } from "./public-operations.ts";
+import { ReceiptVerifier } from "./receipt-verifier.ts";
+import type { OperationRequest } from "./operations-api.ts";
+import type { OperationPreparation } from "./public-operations.ts";
 import { readFile, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { ROOT } from "./processes.ts";
 import { Journal, SerialQueue, verifyRelay } from "./safety.ts";
 import { PINS } from "./local.ts";
-import { collateralSufficient } from "./collateral.ts";
+import { collateralShortfall, collateralSufficient } from "./collateral.ts";
 import { parseAlchemyEndpoint } from "../../../tooling/outlayer-secrets.mjs";
 import type {
   ActionRequest,
@@ -41,25 +47,6 @@ function nearEndpoint(): string {
     throw Error("Invalid NEAR testnet RPC endpoint");
   }
 }
-function nearProvider(url: string): JsonRpcProvider {
-  const provider = new JsonRpcProvider(
-    { url },
-    { retries: 1, wait: 0, backoff: 1 },
-  );
-  // SDK transport errors and connection serialization can otherwise include credential-bearing URLs.
-  Object.defineProperty(provider, "toJSON", {
-    value: () => ({ network: "testnet" }),
-  });
-  const send = provider.sendJsonRpc.bind(provider);
-  provider.sendJsonRpc = async (method, params) => {
-    try {
-      return await send(method, params);
-    } catch {
-      throw Error("NEAR provider unavailable or response rejected");
-    }
-  };
-  return provider;
-}
 interface Deployment {
   version: 2;
   controllerId: string;
@@ -85,6 +72,7 @@ async function ethereum(
       "eth_getBalance",
       "eth_getTransactionCount",
       "eth_getTransactionReceipt",
+      "eth_getTransactionByHash",
       "eth_sendRawTransaction",
     ].includes(method)
   )
@@ -123,6 +111,7 @@ async function ethereum(
 export class PublicCoordinator {
   readonly queue = new SerialQueue(4);
   readonly #provider: JsonRpcProvider;
+  readonly operations: PublicOperations;
   get provider(): JsonRpcProvider {
     return this.#provider;
   }
@@ -146,9 +135,25 @@ export class PublicCoordinator {
     readonly directory: string,
     alchemyUrl: string,
     nearUrl: string,
+    operations: OperationJournal,
   ) {
-    this.#provider = nearProvider(nearUrl);
+    this.#provider = createPublicNearProvider(nearUrl);
     this.#urls = ["https://ethereum-sepolia-rpc.publicnode.com/", alchemyUrl];
+    this.operations = new PublicOperations({
+      journal: operations,
+      verifier: new ReceiptVerifier({
+        near: this.#provider,
+        ethereum: (index, method, params) =>
+          ethereum(this.#urls[index], method, params),
+      }),
+      binding: deployment,
+      replacement: (expected, original, candidate) =>
+        this.replacementNonce(expected, original, candidate),
+      prepare: (request, beforeRelay) =>
+        this.prepareOperation(request, beforeRelay),
+      readiness: () => this.readiness({ fresh: false }),
+      state: () => this.state({ fresh: true }),
+    });
   }
   static async fromFile(
     path: string | undefined,
@@ -216,6 +221,9 @@ export class PublicCoordinator {
       directory,
       alchemyUrl,
       nearUrl,
+      await OperationJournal.open(resolve(directory, "operations.json"), {
+        controllerId: d.controllerId,
+      }),
     );
   }
   async view<T = any>(method: string): Promise<T> {
@@ -583,7 +591,144 @@ export class PublicCoordinator {
     this.waiting = "";
     return captured.bundle;
   }
-  async action(request: ActionRequest): Promise<ActionResult> {
+  private async replacementNonce(
+    expected: Extract<ExpectedStep, { chain: "ethereum"; kind: "funding" }>,
+    original: string,
+    candidate: string,
+  ): Promise<"same-nonce" | "mismatch" | "unavailable"> {
+    try {
+      const values = await Promise.all(
+        this.#urls.map((url) =>
+          Promise.all(
+            [original, candidate].map((hash) =>
+              ethereum(url, "eth_getTransactionByHash", [hash]),
+            ),
+          ),
+        ),
+      );
+      const normalize = (tx: any) => {
+        if (
+          !tx ||
+          typeof tx !== "object" ||
+          Array.isArray(tx) ||
+          typeof tx.hash !== "string" ||
+          !/^0x[0-9a-f]{64}$/i.test(tx.hash) ||
+          typeof tx.from !== "string" ||
+          !/^0x[0-9a-f]{40}$/i.test(tx.from) ||
+          typeof tx.chainId !== "string" ||
+          !/^0x(?:0|[1-9a-f][0-9a-f]{0,63})$/i.test(tx.chainId) ||
+          typeof tx.nonce !== "string" ||
+          !/^0x(?:0|[1-9a-f][0-9a-f]{0,63})$/i.test(tx.nonce)
+        )
+          throw Error("unavailable");
+        return {
+          hash: tx.hash.toLowerCase(),
+          from: tx.from.toLowerCase(),
+          chain: BigInt(tx.chainId).toString(),
+          nonce: BigInt(tx.nonce).toString(),
+        };
+      };
+      const pairs = values.map((txs) => txs.map(normalize));
+      if (JSON.stringify(pairs[0]) !== JSON.stringify(pairs[1]))
+        return "unavailable";
+      if (
+        pairs[0].some(
+          (tx, i) =>
+            tx.hash !== (i === 0 ? original : candidate) ||
+            tx.from !== expected.intent.from.toLowerCase() ||
+            tx.chain !== "11155111",
+        )
+      )
+        return "mismatch";
+      return pairs[0][0].nonce === pairs[0][1].nonce
+        ? "same-nonce"
+        : "mismatch";
+    } catch {
+      return "unavailable";
+    }
+  }
+  private async prepareOperation(
+    request: OperationRequest,
+    beforeRelay: (expected: ExpectedStep) => Promise<void>,
+  ): Promise<OperationPreparation> {
+    if (request.action === "fund" && request.role === "borrower") {
+      return this.queue.run(async () => {
+        this.invalidateReads();
+        try {
+          const state = await this.state({ fresh: true });
+          if (!request.evmSender || !state.market?.vault || !state.ethereum)
+            throw Error("selected funding sender and vault required");
+          const value = collateralShortfall(
+            state.market.terms,
+            state.ethereum.vaultBalanceWei,
+          );
+          if (value <= 0n) throw Error("collateral funding already sufficient");
+          const heads = await Promise.all(
+            this.#urls.map((url) =>
+              ethereum(url, "eth_getBlockByNumber", ["latest", false]),
+            ),
+          );
+          const heights = heads.map((head) => {
+            if (
+              typeof head?.number !== "string" ||
+              !/^0x(?:0|[1-9a-f][0-9a-f]{0,63})$/i.test(head.number)
+            )
+              throw Error("funding head unavailable");
+            return BigInt(head.number);
+          });
+          const funding = {
+            chainId: "11155111" as const,
+            from: request.evmSender,
+            to: state.market.vault,
+            valueWei: value.toString(),
+            data: "0x" as const,
+          };
+          return {
+            funding,
+            state,
+            steps: [
+              {
+                chain: "ethereum",
+                kind: "funding",
+                intent: funding,
+                minimumBlock: heights
+                  .reduce((a, b) => (a > b ? a : b))
+                  .toString(),
+              },
+            ],
+          };
+        } finally {
+          this.invalidateReads();
+        }
+      });
+    }
+    const block = await this.provider.viewBlock({ finality: "optimistic" });
+    const height = block.header.height;
+    if (!Number.isSafeInteger(height) || height < 0)
+      throw Error("NEAR preparation floor unavailable");
+    const result = await this.action(
+      { action: request.action, role: request.role },
+      beforeRelay,
+    );
+    const walletActions = result.walletActions ?? [];
+    return {
+      walletActions,
+      state: result.state,
+      steps: walletActions.map((action) => ({
+        chain: "near",
+        action,
+        signerId:
+          request.role === "borrower"
+            ? this.deployment.borrowerId
+            : this.deployment.lenderId,
+        minimumBlock: String(height),
+      })),
+    };
+  }
+  async action(
+    request: ActionRequest,
+    beforeRelay?: (expected: ExpectedStep) => Promise<void>,
+  ): Promise<ActionResult> {
     return this.queue.run(async () => {
       this.invalidateReads();
       try {
@@ -721,6 +866,20 @@ export class PublicCoordinator {
               }
             }
             if (!receipt) {
+              if (beforeRelay)
+                await beforeRelay({
+                  chain: "ethereum",
+                  kind: "relay",
+                  intent: {
+                    chainId: "11155111",
+                    from: m.vault!,
+                    to: s.current_intent.transfer.to,
+                    valueWei: s.current_intent.transfer.value,
+                    data: "0x",
+                  },
+                  nonce: s.current_intent.transfer.nonce,
+                  candidateHash: candidate.hash,
+                });
               await this.journal.relay(
                 candidate.hash,
                 candidate.raw,

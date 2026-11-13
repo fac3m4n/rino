@@ -55,6 +55,8 @@ export const HASH_DETAILS = {
   pending: "Transaction pending verification.",
   succeeded: "Transaction verified successfully.",
   failed: "Transaction execution failed.",
+  replaced:
+    "Another transaction with the same nonce finalized; this hash was not included.",
   mismatch: "Transaction did not match the prepared action.",
   unavailable: "Provider unavailable; check again.",
   acceptanceFailed: "Callback did not accept the operation.",
@@ -414,6 +416,15 @@ export function operationView(r: StoredOperation): OperationView {
       receiverId: e.chain === "near" ? e.action.receiverId : e.intent.to,
       started: s.started,
       status: stepStatus(s),
+      ...(s.diagnostic
+        ? {
+            diagnostic: {
+              category: s.diagnostic.category,
+              ...(s.diagnostic.name ? { name: s.diagnostic.name } : {}),
+              ...(s.diagnostic.code ? { code: s.diagnostic.code } : {}),
+            },
+          }
+        : {}),
       hashes: s.hashes.map((h) => ({
         hash: h.hash,
         status: h.status,

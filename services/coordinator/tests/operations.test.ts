@@ -598,3 +598,32 @@ describe("bounded strict operation parsers", () => {
     expect(() => parseEmptyObject({ role: "borrower" })).toThrow();
   });
 });
+
+it("projects a validated diagnostic observation without exposing preparation context", async () => {
+  const { journal, path } = await fixture();
+  await prepared(journal);
+  await journal.update(id, (r) => {
+    r.steps[0].started = true;
+    r.steps[0].observation = "wallet-unknown";
+    r.steps[0].diagnostic = {
+      category: "transport",
+      name: "TransportError",
+      code: "NETWORK_ERROR",
+    };
+  });
+  const reopened = await OperationJournal.open(path, binding);
+  const source = reopened.get(id)!;
+  const view = operationView(source);
+  expect(view.steps[0]).toMatchObject({
+    status: "needs-check",
+    diagnostic: {
+      category: "transport",
+      name: "TransportError",
+      code: "NETWORK_ERROR",
+    },
+  });
+  view.steps[0].diagnostic!.category = "unknown";
+  expect(source.steps[0].diagnostic!.category).toBe("transport");
+  expect(reopened.list()[0].steps[0].diagnostic!.category).toBe("transport");
+  expect(JSON.stringify(view)).not.toContain("minimumBlock");
+});

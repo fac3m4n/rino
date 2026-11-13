@@ -487,7 +487,11 @@ it("selects a private runtime NEAR transport without serializing it to provider/
     urls.push(String(url));
     const req = JSON.parse(String(init?.body));
     return new Response(
-      JSON.stringify({ result: { chain_id: "testnet" }, id: req.id }),
+      JSON.stringify({
+        jsonrpc: "2.0",
+        result: { chain_id: "testnet" },
+        id: req.id,
+      }),
     );
   });
   expect((await a.provider.viewNodeStatus()).chain_id).toBe("testnet");

@@ -7,7 +7,13 @@ import { pathToFileURL } from "node:url";
 import { LocalCoordinator, PINS } from "./local.ts";
 import { PublicCoordinator, TESTNET_RPC_URL } from "./public.ts";
 import { ROOT, loadManifest, sleep } from "./processes.ts";
-import { guardRequest, parseAction } from "./safety.ts";
+import { guardRequest, guardTransport, parseAction } from "./safety.ts";
+import {
+  parseOperationRequest,
+  parseOperationObservation,
+  parseOperationImport,
+  parseEmptyObject,
+} from "./operations.ts";
 import type { Config, State, ActionResult, WalletAction } from "./api.ts";
 const EMPTY: State = {
   apiVersion: 1,
@@ -39,6 +45,9 @@ export async function createApp(options: {
   const publicEngine = options.publicEngine;
   const config: Config = {
     apiVersion: 1,
+    ...(publicEngine?.operations
+      ? { capabilities: { operations: true as const } }
+      : {}),
     mode: engine ? "local" : "public",
     ready: !!engine,
     readinessErrors: engine
@@ -124,7 +133,86 @@ export async function createApp(options: {
     }
     return EMPTY;
   });
-  app.get("/api/receipts", async () => engine?.journal.data.receipts ?? []);
+  app.get(
+    "/api/receipts",
+    async () =>
+      engine?.journal.data.receipts ??
+      publicEngine?.operations?.receipts() ??
+      [],
+  );
+  app.get(
+    "/api/operations",
+    async () => publicEngine?.operations?.list() ?? [],
+  );
+  const operationPost = <T>(
+    path: string,
+    parser: (body: unknown) => T,
+    run: (
+      service: NonNullable<typeof publicEngine>["operations"],
+      id: string,
+      body: T,
+    ) => Promise<unknown>,
+  ) => {
+    app.post(path, async (req, reply) => {
+      try {
+        guardTransport({
+          host: req.headers.host ?? "",
+          origin: String(req.headers.origin ?? ""),
+          contentType: String(req.headers["content-type"] ?? ""),
+          csrf: String(req.headers["x-proofcredit-csrf"] ?? ""),
+          expectedOrigin: options.origin,
+          expectedCsrf: token,
+          body: req.body,
+        });
+        const body = parser(req.body);
+        const id = (req.params as { id?: string }).id ?? "";
+        if (
+          id &&
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+            id,
+          )
+        )
+          throw Error("invalid operation id");
+        if (!publicEngine?.operations)
+          return reply.code(409).send({
+            error: "PUBLIC_NOT_READY",
+            message: "Public operation recovery unavailable",
+          });
+        return await run(publicEngine.operations, id, body);
+      } catch {
+        return reply.code(400).send({
+          error: "ACTION_REJECTED",
+          message:
+            "Public operation request rejected; review persisted operation evidence",
+        });
+      }
+    });
+  };
+  operationPost(
+    "/api/operations",
+    parseOperationRequest,
+    (service, _id, body) => service.create(body),
+  );
+  operationPost(
+    "/api/operations/import",
+    parseOperationImport,
+    (service, _id, body) => service.import(body),
+  );
+  operationPost(
+    "/api/operations/:id/observe",
+    parseOperationObservation,
+    (service, id, body) => service.observe(id, body),
+  );
+  operationPost(
+    "/api/operations/:id/reconcile",
+    parseEmptyObject,
+    (service, id) => service.reconcile(id),
+  );
+  operationPost(
+    "/api/operations/:id/continue",
+    parseEmptyObject,
+    (service, id) => service.continue(id),
+  );
   app.post(
     "/api/actions",
     async (req, reply): Promise<ActionResult | unknown> => {

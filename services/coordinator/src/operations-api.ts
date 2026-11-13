@@ -33,6 +33,7 @@ export interface OperationStepView {
   started: boolean;
   status: "prepared" | "processing" | "needs-check" | "succeeded" | "failed";
   hashes: OperationHashView[];
+  diagnostic?: OperationDiagnostic;
 }
 export interface OperationView {
   id: string;
