@@ -10,7 +10,7 @@ import {
 } from "viem";
 import { sepolia } from "viem/chains";
 import type { Config, WalletAction } from "@proofcredit/coordinator/api";
-import { ActionFailure, submissionFailure } from "./outcomes";
+import { ActionFailure, submissionFailure, userRejected } from "./outcomes";
 
 type Injected = EIP1193Provider & {
   on?: (name: string, listener: (data: unknown) => void) => void;
@@ -114,8 +114,37 @@ export function useWallets() {
       }
       const wallet = await (await nearConnector(config)).wallet();
       const accounts = await wallet.getAccounts({ network: "testnet" });
-      if (accounts[0]?.accountId !== expectedAccount)
-        throw new Error(`Connect ${expectedAccount} before signing.`);
+      const accountIds = (list: { accountId: string }[]) =>
+        list.map(({ accountId }) => accountId).join(", ") || "none";
+      if (!accounts.some(({ accountId }) => accountId === expectedAccount))
+        throw new ActionFailure(
+          `Connect ${expectedAccount} on NEAR testnet before signing. Wallet accounts: ${accountIds(accounts)}. Disconnect NEAR, then reconnect with the expected account.`,
+          "failed",
+          "before-submission",
+        );
+      const meteor = wallet.manifest.id === "meteor-wallet";
+      if (meteor) {
+        // Meteor lists imported accounts, but signs with the account cached by signIn.
+        // Confirm that selection once for this batch without requesting a function-call key.
+        let selected;
+        try {
+          selected = await wallet.signIn({ network: "testnet" });
+        } catch (error) {
+          const rejected = userRejected(error);
+          throw new ActionFailure(
+            `Meteor account confirmation ${rejected ? "rejected" : "failed"}. No financial transaction was submitted. Select ${expectedAccount} on NEAR testnet and try again.`,
+            rejected ? "rejected" : "failed",
+            "before-submission",
+          );
+        }
+        setNear(selected.length === 1 ? selected[0].accountId : "");
+        if (selected.length !== 1 || selected[0].accountId !== expectedAccount)
+          throw new ActionFailure(
+            `Meteor selected accounts: ${accountIds(selected)}. Select ${expectedAccount} on NEAR testnet before signing. Disconnect NEAR, then reconnect with the expected account. No financial transaction was submitted.`,
+            "failed",
+            "before-submission",
+          );
+      }
       const hashes: string[] = [];
       for (const action of actions) {
         const earlier = hashes.length;
@@ -139,6 +168,13 @@ export function useWallets() {
           const hash =
             result.transaction?.hash ?? result.transaction_outcome?.id;
           if (hash) hashes.push(hash);
+          if (meteor && result.transaction?.signer_id !== expectedAccount)
+            throw new ActionFailure(
+              `Outcome uncertain. Meteor returned transaction signer ${result.transaction?.signer_id || "none"}; expected ${expectedAccount}. Known hashes: ${hashes.join(", ")}. Reconcile chain state and receipts before resubmitting.`,
+              "unknown",
+              "confirmation",
+              [...hashes],
+            );
           const failed = (status: unknown) =>
             !!status && typeof status === "object" && "Failure" in status;
           if (
