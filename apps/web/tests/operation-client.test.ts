@@ -164,6 +164,77 @@ it("joins equal-timestamp immutable partial-step evidence without regressing sta
   const [checked] = mergeOperations([joined], [authoritative]);
   expect(checked).toMatchObject({ stage: "partial", unresolved: false });
   expect(operationPaused([checked])).toBe(false);
+  const [afterStale] = mergeOperations([checked], [stale]);
+  expect(afterStale.steps).toEqual(checked.steps);
+  expect(afterStale).toMatchObject({ stage: "partial", unresolved: false });
+  expect(operationPaused([afterStale])).toBe(false);
+  const [afterContinuation] = mergeOperations(
+    [{ ...checked, continued: true }],
+    [stale],
+  );
+  expect(afterContinuation.continued).toBe(true);
+  expect(operationPaused([afterContinuation])).toBe(false);
+});
+it("clears succeeded-stage preparation ambiguity after the server completes that operation", () => {
+  const ambiguous = {
+    ...operationFixture,
+    stage: "succeeded" as const,
+    unresolved: true,
+    steps: [
+      {
+        ...operationFixture.steps[0],
+        status: "succeeded" as const,
+        hashes: [
+          { hash, status: "succeeded" as const, detail: "Verified callback" },
+        ],
+      },
+    ],
+  };
+  expect(operationPaused([ambiguous])).toBe(true);
+  const authoritative = { ...ambiguous, unresolved: false };
+  const [completed] = mergeOperations([ambiguous], [authoritative]);
+  expect(completed).toMatchObject({ stage: "succeeded", unresolved: false });
+  expect(completed.steps).toEqual(authoritative.steps);
+  expect(operationPaused([completed])).toBe(false);
+  const [afterStale] = mergeOperations([completed], [ambiguous]);
+  expect(afterStale.unresolved).toBe(false);
+});
+it("does not freeze a partial batch with a merely prepared unstarted step", () => {
+  const prepared = {
+    ...operationFixture,
+    stage: "partial" as const,
+    unresolved: false,
+    steps: [
+      {
+        ...operationFixture.steps[0],
+        status: "succeeded" as const,
+        hashes: [
+          { hash, status: "succeeded" as const, detail: "Verified first step" },
+        ],
+      },
+      {
+        ...operationFixture.steps[0],
+        index: 1,
+        started: false,
+        status: "prepared" as const,
+      },
+    ],
+  };
+  const interrupted = {
+    ...prepared,
+    unresolved: true,
+    steps: [
+      prepared.steps[0],
+      { ...prepared.steps[1], started: true, status: "needs-check" as const },
+    ],
+  };
+  const [merged] = mergeOperations([prepared], [interrupted]);
+  expect(merged).toMatchObject({ stage: "partial", unresolved: true });
+  expect(merged.steps[1]).toMatchObject({
+    started: true,
+    status: "needs-check",
+  });
+  expect(operationPaused([merged])).toBe(true);
 });
 it("does not replay metadata for unchanged-token rejection or create for any token rejection", async () => {
   const paths: string[] = [];

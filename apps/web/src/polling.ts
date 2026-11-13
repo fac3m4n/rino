@@ -87,10 +87,16 @@ export class ReadPoller {
         this.options.reconcile
       ) {
         const now = Date.now();
-        const op = this.activeOperations().find((op) => {
-          const budget = this.checks.get(op.id);
-          return !budget || now - budget.last >= 5000;
-        });
+        const op = this.activeOperations()
+          .filter((op) => {
+            const budget = this.checks.get(op.id);
+            return !budget || now - budget.last >= 5000;
+          })
+          .sort(
+            (a, b) =>
+              (this.checks.get(a.id)?.last ?? -Infinity) -
+              (this.checks.get(b.id)?.last ?? -Infinity),
+          )[0];
         if (op) {
           this.checks.set(op.id, {
             began: this.checks.get(op.id)?.began ?? now,

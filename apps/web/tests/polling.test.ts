@@ -351,3 +351,59 @@ it("keeps no-hash uncertainty and terminal history at idle cadence without recei
   expect(reads).toBe(2);
   poller.dispose();
 });
+it("rotates due known-hash checks so an older continued operation cannot starve newer work", async () => {
+  vi.useFakeTimers();
+  const { operationFixture } = await import("./fixtures");
+  const oldId = operationFixture.id,
+    newId = "22222222-2222-4222-8222-222222222222";
+  const known = {
+    ...operationFixture,
+    steps: [
+      {
+        ...operationFixture.steps[0],
+        hashes: [
+          {
+            hash: "11111111111111111111111111111111",
+            status: "pending" as const,
+            detail: "Pending",
+          },
+        ],
+      },
+    ],
+  };
+  const checks: { id: string; at: number }[] = [];
+  const start = Date.now();
+  const poller = new ReadPoller({
+    read: async () => true,
+    mode: () => "public",
+    pending: () => false,
+    available: () => true,
+    subscribe: () => () => {},
+    operations: () => [
+      { ...known, continued: true },
+      { ...known, id: newId },
+    ],
+    reconcile: async (operation) => {
+      checks.push({ id: operation.id, at: Date.now() - start });
+      return true;
+    },
+  });
+  poller.start();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(checks).toEqual([{ id: oldId, at: 0 }]);
+  await vi.advanceTimersByTimeAsync(4999);
+  expect(checks).toHaveLength(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(checks).toEqual([
+    { id: oldId, at: 0 },
+    { id: newId, at: 5000 },
+  ]);
+  await vi.advanceTimersByTimeAsync(10000);
+  expect(checks).toEqual([
+    { id: oldId, at: 0 },
+    { id: newId, at: 5000 },
+    { id: oldId, at: 10000 },
+    { id: newId, at: 15000 },
+  ]);
+  poller.dispose();
+});

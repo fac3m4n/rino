@@ -227,8 +227,14 @@ export function mergeOperations(
     if (BigInt(op.updatedAt) < BigInt(previous.updatedAt)) continue;
     const continued = previous.continued || op.continued;
     if (
-      previous.stage === "succeeded" ||
-      (previous.stage === "failed" && !previous.unresolved)
+      !previous.unresolved &&
+      (previous.stage === "succeeded" ||
+        previous.stage === "failed" ||
+        (previous.stage === "partial" &&
+          previous.steps.length > 0 &&
+          previous.steps.every((step) =>
+            ["succeeded", "failed"].includes(step.status),
+          )))
     ) {
       result.set(op.id, { ...previous, continued });
       continue;
