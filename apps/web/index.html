@@ -3,12 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f6f7f2" />
+    <meta name="theme-color" content="#f6f7fb" />
+    <script>
+      (() => {
+        let theme = "light";
+        try {
+          if (localStorage.getItem("rino.theme.v1") === "dark") theme = "dark";
+        } catch {}
+        document.documentElement.dataset.theme = theme;
+        document.querySelector('meta[name="theme-color"]').content =
+          theme === "dark" ? "#111827" : "#f6f7fb";
+      })();
+    </script>
     <meta
       name="description"
-      content="ProofCredit: an explicit local two-chain lending demonstration."
+      content="Rino: Ethereum collateral and NEAR credit. A verifiable test-asset credit line."
     />
-    <title>ProofCredit — Two-chain credit</title>
+    <title>Rino — Your position</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   </head>
   <body>

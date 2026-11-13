@@ -5,14 +5,10 @@ import {
   Check,
   ChevronDown,
   Clock3,
-  Copy,
   Fingerprint,
   FlaskConical,
-  Layers3,
-  LockKeyhole,
   RefreshCw,
   ShieldCheck,
-  Wallet,
   X,
 } from "lucide-react";
 import type {
@@ -53,27 +49,25 @@ import {
   operationPaused,
 } from "./operation-client";
 import { OperationPanel } from "./OperationPanel";
+import { Brand } from "./Brand";
+import { ThemeToggle } from "./ThemeToggle";
+import { ActivityTable } from "./ActivityTable";
+import { TransactionLink } from "./TransactionLink";
 import {
   collateralShortfall,
   collateralSufficient,
 } from "@proofcredit/coordinator/collateral";
 
-const short = (value?: string | null) =>
-  value
-    ? value.length > 22
-      ? `${value.slice(0, 10)}…${value.slice(-7)}`
-      : value
-    : "Awaiting initialization";
 const credit = (value?: string | null) =>
   value ? formatUnits(value, 6, 6) : "—";
 const eth = (value?: string | null) =>
   value ? formatUnits(value, 18, 6) : "—";
 const actionNames: Record<ActionName, string> = {
   initialize: "Initialize local market",
-  fund: "Fund vault · 0.12 ETH",
+  fund: "Fund vault",
   prove: "Authenticate collateral",
-  borrow: "Borrow 100 CREDIT",
-  repay: "Repay 101 CREDIT",
+  borrow: "Borrow CREDIT",
+  repay: "Repay CREDIT",
   default: "Lock default",
   cancel: "Cancel before borrowing",
   settle: "Release collateral",
@@ -591,7 +585,7 @@ export default function App() {
     }
   };
   let primary: ActionName = "initialize";
-  let stageTitle = "A credit line, across two networks.";
+  let stageTitle = "Set up credit line";
   let stageCopy =
     "Initialize the local actors and fixed loan terms. Every action below executes against the running chains.";
   if (market?.vault) {
@@ -599,16 +593,15 @@ export default function App() {
       const offered = offeredAction(state!, role, config!.mode);
       if (offered === "fund") {
         primary = "fund";
-        stageTitle = "Put your ETH to work.";
+        stageTitle = "Fund credit line";
         stageCopy = local
-          ? "The local lender funds 100 CREDIT in escrow, transfers the 1 CREDIT fee endowment, and tops up insufficient collateral to 0.12 test ETH."
-          : "Fund the CREDIT offer as lender, then top up insufficient collateral to 0.12 Sepolia ETH as borrower. Your wallet authorizes each action.";
+          ? `Fund ${credit(market.terms.principal_units)} CREDIT in escrow and the ${credit(market.terms.fee_units)} CREDIT fee endowment, then top up the configured ETH collateral.`
+          : "Fund the CREDIT offer as lender, then top up the exact ETH shortfall as borrower. Your wallet authorizes each action.";
         if (
           collateralSufficient(market.terms, state?.ethereum?.vaultBalanceWei)
         ) {
           stageTitle = "Restore the CREDIT offer.";
-          stageCopy =
-            "The vault already holds sufficient ETH. Fund 100 CREDIT in lender escrow without depositing more collateral.";
+          stageCopy = `The vault already holds sufficient ETH. Fund ${credit(market.terms.principal_units)} CREDIT in lender escrow without depositing more collateral.`;
         }
         if (
           !local &&
@@ -617,35 +610,33 @@ export default function App() {
             BigInt(market.terms.principal_units)
         ) {
           stageTitle = "Restore the borrower fee endowment.";
-          stageCopy =
-            "The CREDIT offer is funded. Transfer only the missing amount to give the borrower the 1 CREDIT demonstration repayment fee.";
+          stageCopy = `The CREDIT offer is funded. Transfer only the missing amount to give the borrower the ${credit(market.terms.fee_units)} CREDIT demonstration repayment fee.`;
         }
       } else if (offered === "prove") {
         primary = "prove";
-        stageTitle = "Turn collateral into evidence.";
+        stageTitle = "Authenticate collateral";
         stageCopy =
           "Authenticate the funded Ethereum account through the worker and NEAR receipts.";
       } else {
         primary = "borrow";
-        stageTitle = "Your collateral is ready.";
-        stageCopy =
-          "Receive 100 transferable test CREDIT on NEAR. Your fixed repayment is 101 CREDIT.";
+        stageTitle = "Borrow CREDIT";
+        stageCopy = `Receive ${credit(market.terms.principal_units)} test CREDIT on NEAR. Fixed repayment: ${credit(market.terms.debt_units)} CREDIT.`;
       }
     } else if (market.phase === "Active") {
       primary = role === "borrower" ? "repay" : "default";
-      stageTitle = "Credit unlocked. ETH secured.";
+      stageTitle = role === "borrower" ? "Repay loan" : "Lender position";
       stageCopy =
         role === "borrower"
           ? "Repay before maturity, then authenticate the Ethereum release."
           : "The lender may lock default at maturity. Recovery is capped; the borrower keeps any surplus.";
     } else if (market.phase === "Closed") {
       primary = "claim";
-      stageTitle = "The loop is complete.";
+      stageTitle = "Loan closed";
       stageCopy =
         "The terminal Ethereum checkpoint is authenticated on NEAR. This vault is retired; do not send further deposits.";
     } else {
       primary = "settle";
-      stageTitle = "Bring the collateral home.";
+      stageTitle = "Confirm release";
       stageCopy =
         "Sign the fixed transfer, relay it to Ethereum, then authenticate its receipt on NEAR.";
     }
@@ -717,7 +708,11 @@ export default function App() {
               : "Fund CREDIT offer"
             : action === "fund"
               ? `Fund vault · ${eth(fundingShortfall)} ETH`
-              : actionNames[action]}
+              : action === "borrow"
+                ? `Borrow ${credit(market?.terms.principal_units)} CREDIT`
+                : action === "repay"
+                  ? `Repay ${credit(market?.terms.debt_units)} CREDIT`
+                  : actionNames[action]}
         {!secondary && pending !== action ? <ArrowRight size={17} /> : null}
       </button>
     );
@@ -726,92 +721,40 @@ export default function App() {
     <>
       <div className="app-shell">
         <header className="topbar">
-          <a className="brand" href="/" aria-label="ProofCredit home">
-            <span className="brand-symbol">
-              p<span>c</span>
-            </span>
-            ProofCredit<span className="beta">BETA</span>
-          </a>
+          <Brand />
           <nav aria-label="Primary">
-            <span className="nav-active">Dashboard</span>
+            <a className="nav-active" href="#position">
+              Your position
+            </a>
+            <a href="#activity">Activity</a>
             <button onClick={openEvidence}>
-              Evidence <ArrowUpRight size={13} />
+              Market details <ArrowUpRight size={14} />
             </button>
           </nav>
-          <div className="connection">
-            <span className={`status-dot ${config?.ready ? "live" : ""}`} />
-            {config?.ready ? "Environment ready" : "Connecting environment"}
-          </div>
-        </header>
-        <main>
-          <section className="heading">
-            <div>
-              <div className="eyebrow">CROSS-CHAIN CREDIT, WITH PROOF</div>
-              <h1>
-                Keep your ETH.
-                <br className="mobile-break" /> Unlock credit<span>.</span>
-              </h1>
-              <p>
-                Ethereum collateral. NEAR liquidity. One verifiable credit line.
-              </p>
-            </div>
+          <div className="header-controls">
             <span className="environment-badge">
               <FlaskConical size={15} />
               {config
                 ? local
                   ? "Local two-chain demo"
                   : "Public testnet mode"
-                : "Connecting local services"}
+                : "Connecting environment"}
             </span>
-          </section>
-          <section
-            className="authority-strip"
-            aria-label="Network and authority"
-          >
+            <ThemeToggle />
+          </div>
+        </header>
+        <main>
+          <section className="heading" id="position">
             <div>
-              <span className="small-network">E</span>
-              <b>{local ? "Ethereum · local Anvil" : "Ethereum · Sepolia"}</b>
-              <span className="cross-arrow">↔</span>
-              <NearMark />
-              <b>NEAR · {local ? "Sandbox" : "testnet"}</b>
+              <h1>Your position</h1>
+              <p>Borrow on NEAR. Keep your collateral on Ethereum.</p>
             </div>
-            <span className="authority-summary">
-              {local
-                ? "Mock MPC / executor · synthetic RPC · 120s demo"
-                : "User wallet authority · public testnets"}
-            </span>
-            <button onClick={() => setDetails(!details)}>
-              Trust & environment <ChevronDown size={14} />
-            </button>
+            <div className="network-label">
+              {local ? "Local Ethereum" : "Sepolia"}
+              <span aria-hidden="true">→</span>NEAR{" "}
+              {local ? "Sandbox" : "testnet"}
+            </div>
           </section>
-          {details && (
-            <section className="trust-panel">
-              <h2>Know what verifies this demo</h2>
-              <p>
-                {local
-                  ? "Local actors hold development keys. Two synthetic RPC routes share one owned Anvil; mock MPC and executor services are trusted. The controller and real worker execute against local chains."
-                  : "Connected users authorize financial actions. Public testnet readiness must pass before any action is available."}
-              </p>
-              <p>
-                Receipt data relies on the declared two-RPC policy. This is not
-                a receipt-trie light client or hardware attestation. Editable
-                developer accounts and configured service authorities remain
-                trusted.
-              </p>
-              <ul>
-                {config?.authority.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-              <p>
-                Chain ID: {config?.ethereum.chainId ?? "—"} ·{" "}
-                {local
-                  ? "Compressed 120-second loan; owned Sandbox clock"
-                  : "24-hour testnet term"}
-                . CREDIT is a nonredeemable test asset.
-              </p>
-            </section>
-          )}
           {config && !config.ready && (
             <section role="alert" className="notice error">
               <b>Environment is not ready</b>
@@ -867,144 +810,40 @@ export default function App() {
               {message}
             </div>
           )}
-          {config?.mode === "public" && config.capabilities?.operations && (
-            <OperationPanel
-              operations={operations}
-              disabled={!!pending || refreshing}
-              onCheck={(op) =>
-                operationTask(async () => {
-                  if (!operationClient.current) return;
-                  await operationClient.current.check(op);
-                  await reconcile();
-                })
-              }
-              onHash={(op, step, hash) =>
-                operationTask(async () => {
-                  if (!operationClient.current) return;
-                  await operationClient.current.observe(op, {
-                    step,
-                    event: "hash",
-                    hash,
-                  });
-                  await operationClient.current.check(op);
-                  await reconcile();
-                })
-              }
-              onContinue={(op) =>
-                operationTask(async () => {
-                  if (!operationClient.current) return;
-                  await operationClient.current.check(op);
-                  const lane = snapshots.current;
-                  if (
-                    !lane ||
-                    !(await lane.refresh({ fresh: true })) ||
-                    !latest.current?.config.ready ||
-                    !latest.current.state.ready ||
-                    latest.current.state.busy
-                  )
-                    throw Error(
-                      "Fresh ready idle state is required before continuing.",
-                    );
-                  await operationClient.current.continue(op);
-                  if (!(await lane.refresh({ fresh: true })))
-                    throw Error("Unable to refresh state after continuation.");
-                })
-              }
-              onImport={(action, importRole, hash) =>
-                operationTask(async () => {
-                  if (!operationClient.current) return;
-                  await operationClient.current.import(
-                    action,
-                    importRole,
-                    hash,
-                  );
-                  await reconcile();
-                })
-              }
-              onError={setError}
-            />
-          )}
           <div className="dashboard-grid">
             <div className="overview">
-              <div className="section-label">
-                YOUR TWO-CHAIN POSITION <span>01 / OVERVIEW</span>
-              </div>
               <div className="asset-cards">
-                <section className="asset-card ethereum">
-                  <div className="card-heading">
-                    <div className="token-icon eth">
-                      <EthereumMark />
-                    </div>
-                    <div>
-                      <h2>Ethereum vault</h2>
-                      <span>COLLATERAL</span>
-                    </div>
-                    <span className="chain-tag">
-                      {local ? "LOCAL ETH" : "SEPOLIA"}
-                    </span>
-                  </div>
+                <section className="asset-card">
+                  <h2>ETH collateral</h2>
                   <div className="asset-balance" data-testid="vault-balance">
                     {eth(state?.ethereum?.vaultBalanceWei)} <span>ETH</span>
                   </div>
-                  <div className="asset-description">
-                    <LockKeyhole size={13} />
+                  <p>
                     {settlement?.retired
                       ? "Vault retired"
-                      : market?.phase === "Active"
-                        ? "Reserved for this loan"
-                        : "Held in your derived vault"}
-                  </div>
-                  <div className="card-rule" />
-                  <div className="card-row">
-                    <span>Vault address</span>
-                    <button
-                      className="address"
-                      disabled={!market?.vault}
-                      title={market?.vault ?? undefined}
-                      onClick={() => {
-                        if (market?.vault)
-                          void navigator.clipboard
-                            .writeText(market.vault)
-                            .then(() => setMessage("Vault address copied."))
-                            .catch(() =>
-                              setError(
-                                "Clipboard unavailable. Open evidence for the complete address.",
-                              ),
-                            );
-                      }}
-                    >
-                      {short(market?.vault)}
-                      <Copy size={12} />
-                    </button>
-                  </div>
-                  <div className="card-row">
-                    <span>Account nonce</span>
-                    <b>{state?.ethereum?.vaultNonce ?? "—"}</b>
-                  </div>
-                  <div className="card-footer">
-                    <span
-                      className={`status-dot ${market?.proof_fresh ? "live" : ""}`}
-                    />
-                    {settlement?.retired
-                      ? "Loan closed · vault retired"
                       : market?.proof_fresh
                         ? "Collateral authenticated"
                         : "Awaiting fresh collateral proof"}
-                  </div>
+                  </p>
                 </section>
-                <section className="asset-card near">
-                  <div className="card-heading">
-                    <div className="token-icon near-token">
-                      <NearMark />
-                    </div>
-                    <div>
-                      <h2>NEAR account</h2>
-                      <span>AVAILABLE CREDIT</span>
-                    </div>
-                    <span className="chain-tag">
-                      {local ? "SANDBOX" : "TESTNET"}
-                    </span>
+                <section className="asset-card">
+                  <h2>
+                    {market?.phase === "DefaultLocked"
+                      ? "Debt at default"
+                      : "Outstanding debt"}
+                  </h2>
+                  <div className="asset-balance" data-testid="loan-debt">
+                    {credit(
+                      market?.phase === "DefaultLocked"
+                        ? market.terms.debt_units
+                        : market?.debt_units,
+                    )}{" "}
+                    <span>CREDIT</span>
                   </div>
+                  <p>Fixed fee · {credit(market?.terms.fee_units)} CREDIT</p>
+                </section>
+                <section className="asset-card">
+                  <h2>Wallet balance</h2>
                   <div className="asset-balance" data-testid="credit-balance">
                     {credit(
                       role === "borrower"
@@ -1013,96 +852,57 @@ export default function App() {
                     )}{" "}
                     <span>CREDIT</span>
                   </div>
-                  <div className="asset-description">
-                    <Wallet size={13} />
-                    {short(
-                      role === "borrower"
-                        ? config?.near.borrowerId
-                        : config?.near.lenderId,
-                    )}
-                  </div>
-                  <div className="card-rule" />
-                  <div className="card-row">
-                    <span>
-                      {market?.phase === "DefaultLocked"
-                        ? "Debt at default"
-                        : "Outstanding debt"}
-                    </span>
-                    <b data-testid="loan-debt">
-                      {credit(
-                        market?.phase === "DefaultLocked"
-                          ? market.terms.debt_units
-                          : market?.debt_units,
-                      )}{" "}
-                      <small>CREDIT</small>
-                    </b>
-                  </div>
-                  <div className="card-row">
-                    <span>
-                      {role === "borrower"
-                        ? "Lender escrow"
-                        : "Claimable CREDIT"}
-                    </span>
-                    <b>
-                      {credit(
-                        role === "borrower"
-                          ? market?.available_liquidity_units
-                          : market?.lender_claim_units,
-                      )}{" "}
-                      <small>CREDIT</small>
-                    </b>
-                  </div>
-                  <div className="card-footer">
-                    <span className="test-asset-dot" />
-                    Nonredeemable test asset · 6 decimals
-                  </div>
+                  <p>
+                    Configured {role} · NEAR {local ? "Sandbox" : "testnet"}
+                  </p>
                 </section>
               </div>
               <section className="terms-panel">
                 <div className="panel-heading">
-                  <h2>Your loan, in plain numbers.</h2>
-                  <span>FIXED TERMS · V{market?.terms.version ?? "1"}</span>
+                  <h2>Your credit line</h2>
+                  <button onClick={openEvidence}>
+                    Details <ArrowUpRight size={14} />
+                  </button>
+                </div>
+                <div className="market-pair">
+                  <span className="token-icon">
+                    <EthereumMark />
+                  </span>
+                  <div>
+                    <h3>ETH / CREDIT</h3>
+                    <p>Ethereum collateral · NEAR liquidity</p>
+                  </div>
+                  <span className="phase-badge">
+                    {market?.phase ?? "Uninitialized"}
+                  </span>
                 </div>
                 <div className="terms-grid">
                   <div>
-                    <span>Borrow amount</span>
+                    <span>Principal</span>
                     <b>
-                      {credit(market?.terms.principal_units ?? "100000000")}{" "}
+                      {credit(market?.terms.principal_units)}{" "}
                       <small>CREDIT</small>
                     </b>
                   </div>
                   <div>
                     <span>Fixed fee</span>
                     <b>
-                      {credit(market?.terms.fee_units ?? "1000000")}{" "}
-                      <small>CREDIT</small>
-                    </b>
-                  </div>
-                  <div>
-                    <span>Loan term</span>
-                    <b>
-                      {local ? "120 sec" : "24 hours"}{" "}
-                      <small>{local ? "DEMO" : "FIXED"}</small>
+                      {credit(market?.terms.fee_units)} <small>CREDIT</small>
                     </b>
                   </div>
                   <div>
                     <span>Maximum LTV</span>
                     <b>
-                      50<small>%</small>
+                      {market?.terms.max_ltv_bps
+                        ? `${formatUnits(market.terms.max_ltv_bps, 2, 2)}%`
+                        : "—"}
                     </b>
                   </div>
-                </div>
-                <div className="terms-note">
-                  <ShieldCheck size={15} />
-                  <span>
-                    Reference: 2,000 CREDIT / ETH. Fixed demo reference, not a
-                    market price oracle.
-                  </span>
                 </div>
               </section>
               <section className="journey-panel">
                 <div className="panel-heading">
-                  <h2>One loan. An evidence trail.</h2>
+                  <h2>Loan progress</h2>
                   <button onClick={openEvidence}>
                     View receipts <ArrowUpRight size={14} />
                   </button>
@@ -1131,11 +931,31 @@ export default function App() {
                         )}
                       </span>
                       <b>{step.name}</b>
-                      <small>{step.sub}</small>
+                      {step.skipped && (
+                        <small className="step-outcome">{step.sub}</small>
+                      )}
                     </li>
                   ))}
                 </ol>
+                <details className="progress-details">
+                  <summary>Progress details</summary>
+                  <dl>
+                    {steps
+                      .filter((step) => !step.skipped)
+                      .map((step) => (
+                        <div key={step.name}>
+                          <dt>{step.name}</dt>
+                          <dd>{step.sub}</dd>
+                        </div>
+                      ))}
+                  </dl>
+                </details>
               </section>
+              <ActivityTable
+                config={config}
+                receipts={receipts}
+                onOpenEvidence={openEvidence}
+              />
             </div>
             <aside className="action-panel">
               <div className="role-tabs" aria-label="Acting account">
@@ -1157,19 +977,12 @@ export default function App() {
                   <span className="status-dot live" />
                   {market?.phase ?? "NEW CREDIT LINE"}
                 </div>
-                <div className="action-illustration">
-                  <Layers3 size={32} />
-                  <span>
-                    <ShieldCheck size={21} />
-                  </span>
-                </div>
                 <h2>{stageTitle}</h2>
                 <p>{stageCopy}</p>
                 <div className="repayment-row">
                   <span>Total repayment</span>
                   <b>
-                    {credit(market?.terms.debt_units ?? "101000000")}{" "}
-                    <small>CREDIT</small>
+                    {credit(market?.terms.debt_units)} <small>CREDIT</small>
                   </b>
                 </div>
                 <div className="repayment-row">
@@ -1184,6 +997,27 @@ export default function App() {
                       : "Ethereum"}
                   </b>
                 </div>
+                <div className="repayment-row">
+                  <span>Loan term</span>
+                  <b>
+                    {market?.terms.term_seconds
+                      ? `${market.terms.term_seconds} sec`
+                      : "—"}
+                  </b>
+                </div>
+                {config?.capabilities?.operations &&
+                  operationPaused(operations) && (
+                    <div className="pending-box recovery-prompt">
+                      <b>An operation needs checking.</b>
+                      <p>
+                        Financial actions remain paused. Inspect the exact
+                        transaction before continuing.
+                      </p>
+                      <a href="#operation-recovery">
+                        Check operation recovery <ArrowRight size={14} />
+                      </a>
+                    </div>
+                  )}
                 <ActionButton action={primary} />
                 {guard(primary) && (
                   <p className="guard-reason">{guard(primary)}</p>
@@ -1268,7 +1102,7 @@ export default function App() {
                     >
                       <EthereumMark />
                       {wallets.evmAccount
-                        ? short(wallets.evmAccount)
+                        ? wallets.evmAccount
                         : "Connect Ethereum wallet"}
                     </button>
                     {wallets.evmAccount && wallets.evmChainId !== 11155111 && (
@@ -1282,6 +1116,62 @@ export default function App() {
                     )}
                   </div>
                 )}
+                <details className="identity-details">
+                  <summary>
+                    Accounts & vault <ChevronDown size={14} />
+                  </summary>
+                  <dl className="identity-meta">
+                    <div>
+                      <dt>Intended {role}</dt>
+                      <dd>
+                        {role === "borrower"
+                          ? (config?.near.borrowerId ?? "—")
+                          : (config?.near.lenderId ?? "—")}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Connected NEAR signer</dt>
+                      <dd>
+                        {wallets.nearAccount ||
+                          (local ? "Local development actor" : "Not connected")}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Connected Ethereum signer</dt>
+                      <dd>{wallets.evmAccount || "Not connected"}</dd>
+                    </div>
+                    <div>
+                      <dt>Ethereum wallet network</dt>
+                      <dd>{wallets.evmChainId ?? "—"}</dd>
+                    </div>
+                    <div>
+                      <dt>Vault address</dt>
+                      <dd>{market?.vault ?? "—"}</dd>
+                    </div>
+                    <div>
+                      <dt>Account nonce</dt>
+                      <dd>{state?.ethereum?.vaultNonce ?? "—"}</dd>
+                    </div>
+                    <div>
+                      <dt>
+                        {role === "borrower"
+                          ? "Lender escrow"
+                          : "Claimable CREDIT"}
+                      </dt>
+                      <dd>
+                        {credit(
+                          role === "borrower"
+                            ? market?.available_liquidity_units
+                            : market?.lender_claim_units,
+                        )}{" "}
+                        CREDIT
+                      </dd>
+                    </div>
+                  </dl>
+                </details>
+                <p className="asset-disclosure">
+                  Demo CREDIT has no redemption value.
+                </p>
               </div>
               <div className="more-actions">
                 <details>
@@ -1324,6 +1214,116 @@ export default function App() {
               </div>
             </aside>
           </div>
+          <div id="operation-recovery" tabIndex={-1}>
+            {config?.mode === "public" && config.capabilities?.operations && (
+              <OperationPanel
+                config={config}
+                operations={operations}
+                disabled={!!pending || refreshing}
+                onCheck={(op) =>
+                  operationTask(async () => {
+                    if (!operationClient.current) return;
+                    await operationClient.current.check(op);
+                    await reconcile();
+                  })
+                }
+                onHash={(op, step, hash) =>
+                  operationTask(async () => {
+                    if (!operationClient.current) return;
+                    await operationClient.current.observe(op, {
+                      step,
+                      event: "hash",
+                      hash,
+                    });
+                    await operationClient.current.check(op);
+                    await reconcile();
+                  })
+                }
+                onContinue={(op) =>
+                  operationTask(async () => {
+                    if (!operationClient.current) return;
+                    await operationClient.current.check(op);
+                    const lane = snapshots.current;
+                    if (
+                      !lane ||
+                      !(await lane.refresh({ fresh: true })) ||
+                      !latest.current?.config.ready ||
+                      !latest.current.state.ready ||
+                      latest.current.state.busy
+                    )
+                      throw Error(
+                        "Fresh ready idle state is required before continuing.",
+                      );
+                    await operationClient.current.continue(op);
+                    if (!(await lane.refresh({ fresh: true })))
+                      throw Error(
+                        "Unable to refresh state after continuation.",
+                      );
+                  })
+                }
+                onImport={(action, importRole, hash) =>
+                  operationTask(async () => {
+                    if (!operationClient.current) return;
+                    await operationClient.current.import(
+                      action,
+                      importRole,
+                      hash,
+                    );
+                    await reconcile();
+                  })
+                }
+                onError={setError}
+              />
+            )}
+          </div>
+          <div className="protocol-details">
+            <section
+              className="authority-strip"
+              aria-label="Network and authority"
+            >
+              <div>
+                <span className="small-network">E</span>
+                <b>{local ? "Ethereum · local Anvil" : "Ethereum · Sepolia"}</b>
+                <span className="cross-arrow">↔</span>
+                <NearMark />
+                <b>NEAR · {local ? "Sandbox" : "testnet"}</b>
+              </div>
+              <span className="authority-summary">
+                {local
+                  ? "Mock MPC / executor · synthetic RPC"
+                  : "User wallet authority · public testnets"}
+              </span>
+              <button onClick={() => setDetails(!details)}>
+                Trust & environment <ChevronDown size={14} />
+              </button>
+            </section>
+            {details && (
+              <section className="trust-panel">
+                <h2>Know what verifies this demo</h2>
+                <p>
+                  {local
+                    ? "Local actors hold development keys. Two synthetic RPC routes share one owned Anvil; mock MPC and executor services are trusted. The controller and real worker execute against local chains."
+                    : "Connected users authorize financial actions. Public testnet readiness must pass before any action is available."}
+                </p>
+                <p>
+                  Receipt data relies on the declared two-RPC policy. This is
+                  not a receipt-trie light client or hardware attestation.
+                  Editable developer accounts and configured service authorities
+                  remain trusted.
+                </p>
+                <ul>
+                  {config?.authority.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+                <p>
+                  Chain ID: {config?.ethereum.chainId ?? "—"} ·{" "}
+                  {market?.terms.term_seconds ?? config?.termSeconds ?? "—"}{" "}
+                  second configured term . CREDIT is a nonredeemable test asset.
+                </p>
+              </section>
+            )}
+          </div>
           <section className="evidence-bar">
             <div className="evidence-icon">
               <ShieldCheck size={21} />
@@ -1341,8 +1341,8 @@ export default function App() {
           </section>
           <footer>
             <span>
-              ProofCredit <span className="footer-slash">/</span> Built for
-              verifiable credit.
+              Rino <span className="footer-slash">/</span> Credit, across
+              chains.
             </span>
             <span>
               Test assets only. No redemption or production custody promise.
@@ -1380,6 +1380,32 @@ export default function App() {
             </p>
             <dl className="evidence-meta">
               <div>
+                <dt>Borrower</dt>
+                <dd>{config?.near.borrowerId ?? "—"}</dd>
+              </div>
+              <div>
+                <dt>Lender</dt>
+                <dd>{config?.near.lenderId ?? "—"}</dd>
+              </div>
+              <div>
+                <dt>Connected NEAR signer</dt>
+                <dd>{wallets.nearAccount || "Not connected"}</dd>
+              </div>
+              <div>
+                <dt>Connected Ethereum signer</dt>
+                <dd>{wallets.evmAccount || "Not connected"}</dd>
+              </div>
+              <div>
+                <dt>Vault</dt>
+                <dd>{market?.vault ?? "—"}</dd>
+              </div>
+              <div>
+                <dt>Fixed reference (not a price oracle)</dt>
+                <dd>
+                  {credit(market?.terms.reference_units_per_eth)} CREDIT / ETH
+                </dd>
+              </div>
+              <div>
                 <dt>Loan phase</dt>
                 <dd>{market?.phase ?? "Uninitialized"}</dd>
               </div>
@@ -1415,7 +1441,11 @@ export default function App() {
                       <em>{receipt.status}</em>
                     </div>
                     <p>{receipt.detail}</p>
-                    {receipt.hash && <code>{receipt.hash}</code>}
+                    <TransactionLink
+                      config={config}
+                      chain={receipt.chain}
+                      hash={receipt.hash}
+                    />
                     <div className="receipt-facts">
                       <span>Block {receipt.blockNumber ?? "pending"}</span>
                       {receipt.gasUsed && <span>Gas {receipt.gasUsed}</span>}

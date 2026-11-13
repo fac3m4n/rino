@@ -21,7 +21,7 @@ test("@layout fixture-only responsive dashboard and keyboard evidence drawer", a
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "Keep your ETH. Unlock credit." }),
+    page.getByRole("heading", { name: "Your position" }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Repay 101 CREDIT", exact: true }),
