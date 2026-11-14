@@ -150,3 +150,49 @@ for (const bad of [{ unknown: [] }, [null], [{ id: "wrong" }]])
     const { snapshot } = await import("../src/client");
     await expect(snapshot()).rejects.toThrow();
   });
+it("binds reads, mutation and operation recovery to the selected market API", async () => {
+  const paths: string[] = [];
+  vi.stubGlobal("fetch", async (url: unknown) => {
+    paths.push(String(url));
+    return Response.json(
+      String(url).includes("config")
+        ? {
+            ...configFixture,
+            mode: "public",
+            capabilities: { operations: true },
+          }
+        : String(url).endsWith("operations") || String(url).endsWith("receipts")
+          ? []
+          : {},
+    );
+  });
+  const { snapshot, postApi } = await import("../src/client");
+  const options = { apiBase: "/api/markets/reserve" };
+  await snapshot({ ...options, fresh: true });
+  await submitAction(configFixture, "repay", "borrower", options);
+  await postApi(configFixture, "operations/import", {}, options);
+  expect(paths).toEqual([
+    "/api/markets/reserve/config?fresh=1",
+    "/api/markets/reserve/state?fresh=1",
+    "/api/markets/reserve/receipts",
+    "/api/markets/reserve/operations",
+    "/api/markets/reserve/actions",
+    "/api/markets/reserve/operations/import",
+  ]);
+});
+for (const apiBase of [
+  "https://other.invalid/api",
+  "//other.invalid/api",
+  "/api/markets/../primary",
+  "/api/markets/reserve?market=primary",
+  "/api/markets/a%2fb",
+  "/api/",
+])
+  it(`rejects an unsafe market API before any wallet request is submitted (${apiBase})`, async () => {
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    await expect(
+      submitAction(configFixture, "repay", "borrower", { apiBase }),
+    ).rejects.toMatchObject({ uncertainMutation: false });
+    expect(fetcher).not.toHaveBeenCalled();
+  });

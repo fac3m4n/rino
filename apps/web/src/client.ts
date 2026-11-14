@@ -14,6 +14,7 @@ export interface RequestOptions {
   timeoutMs?: number;
   fresh?: boolean;
   signal?: AbortSignal;
+  apiBase?: string;
 }
 import { ActionFailure } from "./outcomes";
 export class RequestFailure extends ActionFailure {
@@ -29,11 +30,20 @@ export class RequestFailure extends ActionFailure {
     );
   }
 }
+/** Only server-owned, same-origin market routes may receive actions or CSRF. */
+export function validateApiBase(value = "/api"): string {
+  if (value !== "/api" && !/^\/api\/markets\/[a-z][a-z0-9-]{0,31}$/.test(value))
+    throw new RequestFailure("Invalid market API route.");
+  return value;
+}
 async function requestJson<T>(
   path: string,
   init: RequestInit,
   options: RequestOptions,
 ): Promise<T> {
+  const apiBase = validateApiBase(options.apiBase);
+  if (!/^[a-z0-9-]+(?:\/[a-z0-9-]+)*(?:\?fresh=1)?$/.test(path))
+    throw new RequestFailure("Invalid market API path.");
   const mutation = init.method === "POST";
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -59,7 +69,7 @@ async function requestJson<T>(
     );
   });
   const delivery = (async () => {
-    const response = await fetch(`/api/${path}`, {
+    const response = await fetch(`${apiBase}/${path}`, {
       ...init,
       signal: controller.signal,
     });

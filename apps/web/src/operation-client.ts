@@ -14,6 +14,7 @@ import {
   postApi,
   readApi,
   RequestFailure,
+  validateApiBase,
 } from "./client";
 import { ActionFailure, submissionFailure } from "./outcomes";
 import type { WalletProgress } from "./wallets";
@@ -35,7 +36,10 @@ const actions = [
   "advance-maturity",
   "recover",
 ];
-const hintKey = "rino.operations.v1";
+const legacyHintKey = "rino.operations.v1";
+export function operationStorageKey(config: Config): string {
+  return `${legacyHintKey}:${config.near.networkId}:${config.near.controllerId}`;
+}
 type ObjectValue = Record<string, unknown>;
 function object(v: unknown): v is ObjectValue {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -337,68 +341,132 @@ type Hint = {
   step: number;
   hash: string;
 };
+type StoredRecovery = { hints: Hint[]; requests: OperationRequest[] };
+function storedKeys(
+  value: ObjectValue,
+  required: string[],
+  optional: string[] = [],
+): boolean {
+  return (
+    required.every((key) => Object.hasOwn(value, key)) &&
+    Object.keys(value).every(
+      (key) => required.includes(key) || optional.includes(key),
+    )
+  );
+}
+function readableRecovery(
+  value: unknown,
+  config: Config,
+  scoped: boolean,
+): value is StoredRecovery {
+  if (
+    !object(value) ||
+    !storedKeys(
+      value,
+      ["version", "controllerId", "hints", "requests"],
+      ["networkId"],
+    ) ||
+    value.version !== 1 ||
+    value.controllerId !== config.near.controllerId ||
+    (scoped
+      ? value.networkId !== config.near.networkId
+      : value.networkId !== undefined &&
+        value.networkId !== config.near.networkId) ||
+    !Array.isArray(value.hints) ||
+    value.hints.length > 512 ||
+    !Array.isArray(value.requests) ||
+    value.requests.length > 64
+  )
+    return false;
+  const hints = new Set<string>(),
+    requests = new Set<string>();
+  for (const hint of value.hints) {
+    if (
+      !object(hint) ||
+      !storedKeys(hint, ["id", "action", "role", "step", "hash"]) ||
+      !text(hint.id, 36) ||
+      !UUID.test(hint.id) ||
+      !one(hint.action, actions) ||
+      !one(hint.role, ["borrower", "lender"]) ||
+      (hint.step !== 0 && hint.step !== 1) ||
+      !text(hint.hash, 66) ||
+      !(validHash(hint.hash, "near") || validHash(hint.hash, "ethereum"))
+    )
+      return false;
+    const identity = `${hint.id}:${hint.step}:${hint.hash}`;
+    if (hints.has(identity)) return false;
+    hints.add(identity);
+  }
+  for (const request of value.requests) {
+    if (
+      !object(request) ||
+      !storedKeys(request, ["id", "action", "role"], ["evmSender"]) ||
+      !text(request.id, 36) ||
+      !UUID.test(request.id) ||
+      requests.has(request.id) ||
+      !one(request.action, actions) ||
+      !one(request.role, ["borrower", "lender"]) ||
+      (request.evmSender !== undefined &&
+        (!text(request.evmSender, 42) ||
+          !/^0x[0-9a-fA-F]{40}$/.test(request.evmSender)))
+    )
+      return false;
+    requests.add(request.id);
+  }
+  return true;
+}
 export class OperationClient {
   private live = true;
   private queues = new Map<string, Promise<unknown>>();
   private hints: Hint[] = [];
   private requests: OperationRequest[] = [];
   private checking = new Map<string, Promise<OperationView>>();
+  private storageWritable = false;
+  private readonly storageKey: string;
   constructor(
     private config: Config,
     private changed: (op: OperationView) => void,
     private storage?: Pick<Storage, "getItem" | "setItem">,
+    private readonly apiBase = "/api",
   ) {
+    validateApiBase(apiBase);
+    this.storageKey = operationStorageKey(config);
     try {
-      const raw = storage?.getItem(hintKey);
-      if (raw && raw.length <= 98304) {
-        const parsed = JSON.parse(raw);
-        if (
-          parsed.version === 1 &&
-          parsed.controllerId === config.near.controllerId
-        ) {
-          if (Array.isArray(parsed.hints) && parsed.hints.length <= 512)
-            this.hints = parsed.hints
-              .filter(
-                (h: unknown): h is Hint =>
-                  object(h) &&
-                  text(h.id, 36) &&
-                  UUID.test(h.id) &&
-                  one(h.action, actions) &&
-                  one(h.role, ["borrower", "lender"]) &&
-                  Number.isInteger(h.step) &&
-                  Number(h.step) >= 0 &&
-                  Number(h.step) < 2 &&
-                  text(h.hash, 66) &&
-                  (validHash(h.hash, "near") || validHash(h.hash, "ethereum")),
-              )
-              .map((h: Hint) => ({
-                id: h.id,
-                action: h.action,
-                role: h.role,
-                step: h.step,
-                hash: h.hash,
-              }));
-          if (Array.isArray(parsed.requests) && parsed.requests.length <= 64)
-            this.requests = parsed.requests
-              .filter(
-                (r: unknown): r is OperationRequest =>
-                  object(r) &&
-                  text(r.id, 36) &&
-                  UUID.test(r.id) &&
-                  one(r.action, actions) &&
-                  one(r.role, ["borrower", "lender"]),
-              )
-              .map((r: OperationRequest) => ({
-                id: r.id,
-                action: r.action,
-                role: r.role,
-              }));
-        }
+      const current = storage?.getItem(this.storageKey);
+      const scoped = current !== null && current !== undefined;
+      const raw = scoped ? current : storage?.getItem(legacyHintKey);
+      if (raw === null || raw === undefined) {
+        this.storageWritable = true;
+        return;
       }
+      if (typeof raw !== "string" || raw.length > 98304) return;
+      const parsed: unknown = JSON.parse(raw);
+      if (
+        !scoped &&
+        object(parsed) &&
+        typeof parsed.controllerId === "string" &&
+        (parsed.controllerId !== config.near.controllerId ||
+          (parsed.networkId !== undefined &&
+            parsed.networkId !== config.near.networkId))
+      ) {
+        // Another market's legacy evidence stays intact; this namespace is new.
+        this.storageWritable = true;
+        return;
+      }
+      // Validate the complete payload before permitting any write. Filtering a
+      // partially unreadable record would erase evidence needed for recovery.
+      if (!readableRecovery(parsed, config, scoped)) return;
+      this.hints = parsed.hints.map((hint) => ({ ...hint }));
+      this.requests = parsed.requests.map((request) => ({ ...request }));
+      this.storageWritable = true;
+      // A valid migration is marked once so cleared requests cannot resurrect.
+      if (!scoped) this.save();
     } catch {
-      /* Server recovery remains authoritative when storage is unavailable. */
+      // Reads that fail never authorize writes over the unreadable record.
+      // Server recovery remains available without discarding browser evidence.
     }
   }
+
   dispose() {
     this.live = false;
   }
@@ -413,12 +481,14 @@ export class OperationClient {
     this.config = config;
   }
   private save() {
+    if (!this.storageWritable) return;
     try {
       this.storage?.setItem(
-        hintKey,
+        this.storageKey,
         JSON.stringify({
           version: 1,
           controllerId: this.config.near.controllerId,
+          networkId: this.config.near.networkId,
           hints: this.hints,
           requests: this.requests,
         }),
@@ -509,6 +579,7 @@ export class OperationClient {
       this.config,
       "operations",
       request,
+      { apiBase: this.apiBase },
     );
     const op = this.publish(result.operation, request.id);
     if (op.action !== action || op.role !== role || op.historical) invalid();
@@ -528,6 +599,7 @@ export class OperationClient {
         try {
           value = await postApi(this.config, path, observation, {
             timeoutMs: GET_TIMEOUT_MS,
+            apiBase: this.apiBase,
           });
         } catch (error) {
           if (
@@ -535,11 +607,15 @@ export class OperationClient {
             error.responseCode !== "ACTION_REJECTED"
           )
             throw error;
-          const fresh = await readApi<Config>("config", { fresh: true });
+          const fresh = await readApi<Config>("config", {
+            fresh: true,
+            apiBase: this.apiBase,
+          });
           if (fresh.csrfToken === this.config.csrfToken) throw error;
           this.updateConfig(fresh);
           value = await postApi(this.config, path, observation, {
             timeoutMs: GET_TIMEOUT_MS,
+            apiBase: this.apiBase,
           });
         }
         return this.publish(value, op.id);
@@ -596,7 +672,7 @@ export class OperationClient {
       this.config,
       `operations/${op.id}/reconcile`,
       {},
-      { timeoutMs: GET_TIMEOUT_MS },
+      { timeoutMs: GET_TIMEOUT_MS, apiBase: this.apiBase },
     ).then((value) => this.publish(value, op.id));
     this.checking.set(op.id, result);
     void result
@@ -612,7 +688,7 @@ export class OperationClient {
         this.config,
         `operations/${op.id}/continue`,
         {},
-        { timeoutMs: GET_TIMEOUT_MS },
+        { timeoutMs: GET_TIMEOUT_MS, apiBase: this.apiBase },
       ),
       op.id,
     );
@@ -630,7 +706,7 @@ export class OperationClient {
         this.config,
         "operations/import",
         { id, action, role, hash },
-        { timeoutMs: GET_TIMEOUT_MS },
+        { timeoutMs: GET_TIMEOUT_MS, apiBase: this.apiBase },
       ),
       id,
     );

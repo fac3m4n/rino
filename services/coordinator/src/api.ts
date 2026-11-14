@@ -151,6 +151,18 @@ export interface Config {
     controller: string;
   };
 }
+/** Configured markets are independently bound; controller IDs identify CREDIT tokens. */
+export interface MarketDescriptor {
+  id: string;
+  name: string;
+  apiBase: string;
+  controllerId: string;
+  networkId: Config["near"]["networkId"];
+}
+export interface MarketsCatalog {
+  apiVersion: 1;
+  markets: MarketDescriptor[];
+}
 export interface Receipt {
   id: string;
   chain: "near" | "ethereum" | "worker";

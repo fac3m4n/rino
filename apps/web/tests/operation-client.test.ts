@@ -437,3 +437,275 @@ it("server records remain usable when browser storage throws and malformed hints
   expect(visible[0].id).toBe(id);
   expect(operationPaused(visible)).toBe(true);
 });
+it("keeps scoped metadata and CSRF rotation on the original market route", async () => {
+  const calls: { url: string; token?: string }[] = [];
+  vi.stubGlobal("fetch", async (url: unknown, init: RequestInit) => {
+    const token = (init.headers as Record<string, string>)["X-Rino-CSRF"];
+    calls.push({ url: String(url), token });
+    if (String(url).includes("config"))
+      return Response.json({ ...config, csrfToken: "rotated" });
+    if (token !== "rotated")
+      return Response.json({ error: "ACTION_REJECTED" }, { status: 400 });
+    return Response.json(operationFixture);
+  });
+  const client = new OperationClient(
+    config,
+    () => {},
+    undefined,
+    "/api/markets/reserve",
+  );
+  await client.observe(operationFixture, { step: 0, event: "wallet-unknown" });
+  await client.check(operationFixture);
+  expect(calls).toEqual([
+    {
+      url: `/api/markets/reserve/operations/${id}/observe`,
+      token: config.csrfToken,
+    },
+    { url: "/api/markets/reserve/config?fresh=1", token: undefined },
+    { url: `/api/markets/reserve/operations/${id}/observe`, token: "rotated" },
+    {
+      url: `/api/markets/reserve/operations/${id}/reconcile`,
+      token: "rotated",
+    },
+  ]);
+});
+it("keeps unresolved browser requests in separate network and controller namespaces", async () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+  };
+  vi.stubGlobal("fetch", async () => {
+    throw Error("lost preparation response");
+  });
+  const second = {
+    ...config,
+    near: { ...config.near, controllerId: "second.test" },
+  };
+  const otherNetwork = {
+    ...config,
+    near: { ...config.near, networkId: "testnet" as const },
+  };
+  const originals: OperationView[][] = [[], [], []];
+  for (const [index, selected] of [config, second, otherNetwork].entries())
+    await new OperationClient(
+      selected,
+      (op) => originals[index].push(op),
+      storage,
+    )
+      .create("repay", "borrower")
+      .catch(() => {});
+  expect(values.size).toBe(3);
+  const restored: OperationView[][] = [[], [], []];
+  for (const [index, selected] of [config, second, otherNetwork].entries())
+    await new OperationClient(
+      selected,
+      (op) => restored[index].push(op),
+      storage,
+    ).recoverHints([]);
+  for (let index = 0; index < 3; index++) {
+    expect(restored[index]).toHaveLength(1);
+    expect(restored[index][0].id).toBe(originals[index][0].id);
+  }
+});
+it("migrates matching legacy requests once without deleting legacy or resurrecting cleared evidence", async () => {
+  const legacy = JSON.stringify({
+    version: 1,
+    controllerId: config.near.controllerId,
+    hints: [],
+    requests: [{ id, action: "prove", role: "borrower" }],
+  });
+  const values = new Map([["rino.operations.v1", legacy]]);
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+  };
+  const visible: OperationView[] = [];
+  const client = new OperationClient(config, (op) => visible.push(op), storage);
+  await client.recoverHints([]);
+  expect(visible).toHaveLength(1);
+  expect(visible[0].id).toBe(id);
+  expect(values.get("rino.operations.v1")).toBe(legacy);
+  expect(values.size).toBe(2);
+  const done = {
+    ...operationFixture,
+    stage: "failed" as const,
+    unresolved: false,
+  };
+  await client.recoverHints([done]);
+  const after: OperationView[] = [];
+  await new OperationClient(
+    config,
+    (op) => after.push(op),
+    storage,
+  ).recoverHints([]);
+  expect(after).toEqual([]);
+  expect(values.get("rino.operations.v1")).toBe(legacy);
+});
+it("leaves another controller's legacy hints unchanged", async () => {
+  const legacy = JSON.stringify({
+    version: 1,
+    controllerId: "foreign.test",
+    hints: [],
+    requests: [{ id, action: "repay", role: "borrower" }],
+  });
+  const values = new Map([["rino.operations.v1", legacy]]);
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value);
+    },
+  };
+  const visible: OperationView[] = [];
+  const client = new OperationClient(config, (op) => visible.push(op), storage);
+  await client.recoverHints([]);
+  expect(visible).toEqual([]);
+  expect(values.get("rino.operations.v1")).toBe(legacy);
+});
+it("does not overwrite unreadable or oversized scoped evidence", async () => {
+  const { operationStorageKey } = await import("../src/operation-client");
+  for (const original of [
+    "not json",
+    JSON.stringify({
+      version: 1,
+      controllerId: "foreign.test",
+      hints: [],
+      requests: [],
+      retained: "x".repeat(100000),
+    }),
+  ]) {
+    const values = new Map([[operationStorageKey(config), original]]);
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        values.set(key, value);
+      },
+    };
+    await new OperationClient(config, () => {}, storage).recoverHints([]);
+    expect(values.get(operationStorageKey(config))).toBe(original);
+  }
+});
+it("keeps preparation, deliberate continuation and hash imports on the captured market", async () => {
+  const paths: string[] = [];
+  vi.stubGlobal("fetch", async (url: unknown, init: RequestInit) => {
+    paths.push(String(url));
+    const body = JSON.parse(String(init.body));
+    const selectedId = body.id ?? String(url).split("/").at(-2);
+    const operation = { ...operationFixture, id: selectedId };
+    return Response.json(
+      String(url).endsWith("/operations") ? { operation } : operation,
+    );
+  });
+  const client = new OperationClient(
+    config,
+    () => {},
+    undefined,
+    "/api/markets/reserve",
+  );
+  const prepared = await client.create("prove", "borrower");
+  await client.continue(prepared.operation);
+  await client.import("prove", "borrower", hash);
+  expect(paths).toEqual([
+    "/api/markets/reserve/operations",
+    `/api/markets/reserve/operations/${prepared.operation.id}/continue`,
+    "/api/markets/reserve/operations/import",
+  ]);
+});
+it("preserves a matching scoped payload until every hint and request is readable", async () => {
+  const { operationStorageKey } = await import("../src/operation-client");
+  const validHint = { id, action: "prove", role: "borrower", step: 0, hash };
+  const validRequest = { id, action: "prove", role: "borrower" };
+  const cases: unknown[] = [
+    { hints: "unreadable-hash-evidence", requests: [] },
+    { hints: [], requests: "unreadable-request-evidence" },
+    { hints: Array(513).fill(validHint), requests: [] },
+    { hints: [], requests: Array(65).fill(validRequest) },
+    { hints: [null], requests: [] },
+    {
+      hints: [{ ...validHint, hash: "unreadable-hash-evidence" }],
+      requests: [],
+    },
+    { hints: [{ ...validHint, unrecognized: "evidence" }], requests: [] },
+    {
+      hints: [],
+      requests: [{ ...validRequest, id: "unreadable-request-evidence" }],
+    },
+    { hints: [], requests: [{ ...validRequest, evmSender: "not an address" }] },
+    { hints: [], requests: [{ ...validRequest, unrecognized: "evidence" }] },
+  ];
+  for (const data of cases) {
+    const original = JSON.stringify({
+      version: 1,
+      controllerId: config.near.controllerId,
+      networkId: config.near.networkId,
+      ...(data as object),
+    });
+    expect(original.length).toBeLessThan(98304);
+    const values = new Map([[operationStorageKey(config), original]]);
+    const writes = vi.fn((key: string, value: string) =>
+      values.set(key, value),
+    );
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: writes,
+    };
+    await new OperationClient(config, () => {}, storage).recoverHints([]);
+    expect(writes).not.toHaveBeenCalled();
+    expect(values.get(operationStorageKey(config))).toBe(original);
+  }
+});
+it("never replaces legacy evidence with an empty namespace when its arrays are malformed", async () => {
+  const original = JSON.stringify({
+    version: 1,
+    controllerId: config.near.controllerId,
+    hints: [null],
+    requests: [],
+  });
+  const values = new Map([["rino.operations.v1", original]]);
+  const writes = vi.fn((key: string, value: string) => values.set(key, value));
+  await new OperationClient(config, () => {}, {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: writes,
+  }).recoverHints([]);
+  expect(writes).not.toHaveBeenCalled();
+  expect([...values.entries()]).toEqual([["rino.operations.v1", original]]);
+});
+it("does not write when reading browser recovery evidence fails", async () => {
+  for (const failAt of ["scoped", "legacy"]) {
+    const writes = vi.fn();
+    const storage = {
+      getItem: (key: string) => {
+        if (failAt === "scoped" || key === "rino.operations.v1")
+          throw Error("read denied");
+        return null;
+      },
+      setItem: writes,
+    };
+    await new OperationClient(config, () => {}, storage).recoverHints([]);
+    expect(writes).not.toHaveBeenCalled();
+  }
+});
+it("migrates valid recovery records without filtering their exact funding sender", async () => {
+  const sender = "0x1111111111111111111111111111111111111111";
+  const original = JSON.stringify({
+    version: 1,
+    controllerId: config.near.controllerId,
+    hints: [],
+    requests: [{ id, action: "fund", role: "borrower", evmSender: sender }],
+  });
+  const values = new Map([["rino.operations.v1", original]]);
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+  };
+  await new OperationClient(config, () => {}, storage).recoverHints([]);
+  const { operationStorageKey } = await import("../src/operation-client");
+  expect(JSON.parse(values.get(operationStorageKey(config))!).requests).toEqual(
+    [{ id, action: "fund", role: "borrower", evmSender: sender }],
+  );
+  expect(values.get("rino.operations.v1")).toBe(original);
+});
