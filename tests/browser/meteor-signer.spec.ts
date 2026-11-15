@@ -1,3 +1,11 @@
+import { installMarketCatalog } from "./market-fixtures";
+import {
+  connectNear,
+  openEvidence,
+  openPosition,
+  openRecovery,
+  submitReviewed,
+} from "./ui-helpers";
 /** Synthetic SDK/API boundary evidence only; no real Meteor, signing or chain verification. */
 import { expect, test, type Page } from "@playwright/test";
 import { configFixture, stateFixture } from "../../apps/web/tests/fixtures";
@@ -5,7 +13,9 @@ import { configFixture, stateFixture } from "../../apps/web/tests/fixtures";
 const borrower = "rino-b-2593ce.testnet";
 const lender = "rino-l-2593ce.testnet";
 const proof = (page: Page) =>
-  page.getByRole("button", { name: /^Authenticate collateral/ });
+  page
+    .getByRole("dialog", { name: "ETH market", exact: true })
+    .getByRole("button", { name: /^Verify collateral/ });
 interface Observation {
   connects: number;
   posts: unknown[];
@@ -62,6 +72,7 @@ async function installMeteor(
     gas: "100000000000000",
     deposit: "0",
   };
+  await installMarketCatalog(page, config);
   await page.route("**/api/config*", (r) => r.fulfill({ json: config }));
   await page.route("**/api/state*", (r) => r.fulfill({ json: state }));
   await page.route("**/api/receipts", (r) => r.fulfill({ json: [] }));
@@ -107,6 +118,8 @@ async function installMeteor(
         const borrower = ${JSON.stringify(borrower)};
         const lender = ${JSON.stringify(lender)};
         export class NearConnector {
+            whenManifestLoaded = Promise.resolve();
+            availableWallets = [{ manifest: { id: 'meteor-wallet', name: 'Meteor' } }];
           listeners = {};
           selected = borrower;
           constructor(config) {
@@ -147,18 +160,22 @@ async function installMeteor(
       `,
       }),
   );
-  await page.goto("/");
-  await expect(proof(page)).toBeDisabled({ timeout: 3000 });
-  await page
-    .getByRole("button", { name: "Connect NEAR testnet", exact: true })
-    .click();
+  await page.goto("/app.html");
+  await expect(
+    page.getByRole("heading", { name: "Connect your loan account" }),
+  ).toBeVisible({ timeout: 3000 });
+  await expect(
+    page.getByRole("button", { name: /^Verify collateral/ }),
+  ).toHaveCount(0);
+  await connectNear(page);
   await expect
     .poll(async () => (await observation(page)).connects, { timeout: 3000 })
     .toBe(1);
   await expect(
-    page.getByRole("button", { name: borrower, exact: true }),
+    page.getByRole("button", { name: `Wallets: ${borrower};`, exact: false }),
   ).toBeEnabled({ timeout: 3000 });
   await expect(page.getByRole("alert")).toHaveCount(0);
+  await openPosition(page);
   await expect(proof(page)).toBeEnabled({ timeout: 3000 });
 }
 
@@ -167,7 +184,7 @@ test("@meteor-signer a second imported borrower reaches one signing request afte
   page,
 }) => {
   await installMeteor(page, { selected: [borrower] });
-  await proof(page).click();
+  await submitReviewed(page, proof(page));
   await expect(
     page.getByRole("status").filter({ hasText: "Wallet submission returned" }),
   ).toContainText("Wallet submission returned", { timeout: 3000 });
@@ -189,18 +206,22 @@ test("@meteor-signer selected lender blocks signing and updates the displayed id
   page,
 }) => {
   await installMeteor(page, { selected: [lender] });
-  await proof(page).click();
+  await submitReviewed(page, proof(page));
   await expect(page.getByRole("alert")).toContainText(lender, {
     timeout: 3000,
   });
   await expect(page.getByRole("alert")).toContainText(borrower);
   await expect(
-    page.getByRole("button", { name: lender, exact: true }),
+    page.getByRole("button", { name: `Wallets: ${lender};`, exact: false }),
   ).toBeEnabled();
-  await expect(proof(page)).toBeDisabled();
-  await expect(page.locator(".guard-reason")).toContainText(
-    /disconnect.*reconnect/i,
-  );
+  await expect(
+    page.getByRole("button", { name: /^Verify collateral/ }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("alert")).toContainText(/disconnect.*reconnect/i);
+  await openEvidence(page);
+  await page
+    .getByRole("button", { name: "Request recovery", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: "Continue from checked state" }),
   ).toHaveCount(0);
@@ -220,17 +241,25 @@ test("@meteor-signer returned signer mismatch retains the hash, pauses real App 
     returnedSigner: lender,
     batch: true,
   });
-  await proof(page).click();
+  await submitReviewed(page, proof(page));
   await expect(page.getByRole("alert")).toContainText("synthetic-meteor-hash", {
     timeout: 3000,
   });
   await expect(page.getByRole("alert")).toContainText(/uncertain/i);
   await expect(page.getByRole("alert")).toContainText(lender);
-  await expect(proof(page)).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: /^Verify collateral/ }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("status").filter({ hasText: "Outcome needs checking" }),
+  ).toBeVisible();
+  await openRecovery(page);
   await expect(
     page.getByRole("button", { name: "Continue from checked state" }),
   ).toBeEnabled();
-  await expect(page.locator(".guard-reason")).toContainText(/reconcile/i);
+  await expect(
+    page.getByRole("dialog", { name: "Request recovery", exact: true }),
+  ).toContainText("Checking evidence never resubmits");
   const observed = await observation(page);
   expect(observed.posts).toEqual([{ action: "prove", role: "borrower" }]);
   expect(observed.confirmations).toEqual([{ network: "testnet" }]);
@@ -242,15 +271,17 @@ test("@meteor-signer rejected account confirmation preserves borrower identity a
   page,
 }) => {
   await installMeteor(page, { selected: [borrower], reject: true });
-  await proof(page).click();
+  await submitReviewed(page, proof(page));
   await expect(page.getByRole("alert")).toContainText(
     /confirmation.*rejected/i,
     { timeout: 3000 },
   );
   await expect(
-    page.getByRole("button", { name: borrower, exact: true }),
+    page.getByRole("button", { name: `Wallets: ${borrower};`, exact: false }),
   ).toBeEnabled();
+  await openPosition(page);
   await expect(proof(page)).toBeEnabled();
+  await openRecovery(page);
   await expect(
     page.getByRole("button", { name: "Continue from checked state" }),
   ).toHaveCount(0);
@@ -266,15 +297,20 @@ test("@meteor-signer missing confirmed account clears the identity and blocks si
   page,
 }) => {
   await installMeteor(page, { selected: [] });
-  await proof(page).click();
+  await submitReviewed(page, proof(page));
   await expect(page.getByRole("alert")).toContainText("none", {
     timeout: 3000,
   });
   await expect(page.getByRole("alert")).toContainText(borrower);
   await expect(
-    page.getByRole("button", { name: "Connect NEAR testnet", exact: true }),
+    page.getByRole("button", { name: "Connect wallet", exact: true }).first(),
   ).toBeEnabled();
-  await expect(proof(page)).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: /^Verify collateral/ }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("status").filter({ hasText: "Outcome needs checking" }),
+  ).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Continue from checked state" }),
   ).toHaveCount(0);

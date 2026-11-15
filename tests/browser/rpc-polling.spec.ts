@@ -1,3 +1,10 @@
+import {
+  installReadOnlyNearParticipant,
+  connectEthereum,
+  submitReviewed,
+  openRecovery,
+} from "./ui-helpers";
+import { installMarketCatalog } from "./market-fixtures";
 /** Controlled UI/RPC fixtures only; these requests are not public chain evidence. */
 import { test, expect, type Page } from "@playwright/test";
 import { configFixture, stateFixture } from "../../apps/web/tests/fixtures";
@@ -42,11 +49,23 @@ test("@rpc App public idle/pending and failure schedules have bounded actual API
   page,
 }) => {
   await environment(page);
+  await installReadOnlyNearParticipant(page);
   let reads = 0,
     busy = false,
     ready = true;
+  await installMarketCatalog(page, {
+    ...configFixture,
+    mode: "public",
+    near: { ...configFixture.near, networkId: "testnet" },
+  });
   await page.route("**/api/config*", (r) =>
-    r.fulfill({ json: { ...configFixture, mode: "public" } }),
+    r.fulfill({
+      json: {
+        ...configFixture,
+        mode: "public",
+        near: { ...configFixture.near, networkId: "testnet" },
+      },
+    }),
   );
   await page.route("**/api/state*", (r) => {
     reads++;
@@ -61,7 +80,7 @@ test("@rpc App public idle/pending and failure schedules have bounded actual API
     });
   });
   await page.route("**/api/receipts", (r) => r.fulfill({ json: [] }));
-  await page.goto("/");
+  await page.goto("/app.html");
   await expect.poll(() => reads).toBe(1);
   await expect(page.getByTestId("vault-balance")).toHaveText("0.12 ETH");
   await page.clock.runFor(29999);
@@ -87,16 +106,28 @@ test("@rpc actual App suspends hidden/offline reads and resumes one current requ
   page,
 }) => {
   await environment(page);
+  await installReadOnlyNearParticipant(page);
   let reads = 0;
+  await installMarketCatalog(page, {
+    ...configFixture,
+    mode: "public",
+    near: { ...configFixture.near, networkId: "testnet" },
+  });
   await page.route("**/api/config*", (r) =>
-    r.fulfill({ json: { ...configFixture, mode: "public" } }),
+    r.fulfill({
+      json: {
+        ...configFixture,
+        mode: "public",
+        near: { ...configFixture.near, networkId: "testnet" },
+      },
+    }),
   );
   await page.route("**/api/state*", (r) => {
     reads++;
     return r.fulfill({ json: stateFixture });
   });
   await page.route("**/api/receipts", (r) => r.fulfill({ json: [] }));
-  await page.goto("/");
+  await page.goto("/app.html");
   await expect(page.getByTestId("vault-balance")).toHaveText("0.12 ETH");
   await changeEnvironment(page, false, true);
   await page.clock.runFor(120000);
@@ -137,6 +168,7 @@ for (const scenario of [
     page,
   }) => {
     await environment(page);
+    await installReadOnlyNearParticipant(page);
     await page.addInitScript(installFundingProvider, "success");
     await page.addInitScript((popup: boolean) => {
       const g = globalThis as unknown as {
@@ -165,6 +197,12 @@ for (const scenario of [
     let phase = "Offered";
     let balance = "50000000000000000";
     let failDisplay = false;
+    await installMarketCatalog(page, {
+      ...configFixture,
+      mode: "public",
+      near: { ...configFixture.near, networkId: "testnet" },
+      ethereum: { ...configFixture.ethereum, rpcUrl: null },
+    });
     await page.route("**/api/config*", (r) => {
       configUrls.push(r.request().url());
       return r.fulfill({
@@ -198,15 +236,16 @@ for (const scenario of [
       posts++;
       return r.abort();
     });
-    await page.goto("/");
-    await page
-      .getByRole("button", { name: "Connect Ethereum wallet", exact: true })
-      .click();
-    const funding = page.getByRole("button", { name: /^Fund vault/ });
+    await page.goto("/app.html");
+    await connectEthereum(page);
+    const funding = page.getByRole("button", {
+      name: "Add collateral",
+      exact: true,
+    });
     await expect(funding).toBeEnabled();
     balance = "80000000000000000";
     if (scenario === "fresh-guard") phase = "Closed";
-    await funding.click();
+    await submitReviewed(page, funding);
     if (scenario === "wallet-hidden") {
       await expect
         .poll(() =>
@@ -252,6 +291,7 @@ for (const scenario of [
     expect(posts).toBe(0);
     failDisplay = true;
     await changeEnvironment(page, true, true);
+    await openRecovery(page);
     await page
       .getByRole("button", { name: "Refresh chain state", exact: true })
       .click();

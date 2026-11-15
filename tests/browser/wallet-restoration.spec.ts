@@ -1,3 +1,10 @@
+import { installMarketCatalog } from "./market-fixtures";
+import {
+  closePanel,
+  connectEthereum,
+  openPosition,
+  openWallets,
+} from "./ui-helpers";
 /** Controlled SDK/provider boundaries; real App, hook and guards, no signing. */
 import { expect, test, type Page } from "@playwright/test";
 import { configFixture, stateFixture } from "../../apps/web/tests/fixtures";
@@ -6,11 +13,26 @@ const lender = "rino-l-2593ce.testnet";
 const evm = "0x1111111111111111111111111111111111111111";
 const hintKey = "rino.wallet.near.v1";
 const connected = (page: Page) =>
-  page.getByRole("button", { name: borrower, exact: true });
+  page.getByRole("button", { name: `Wallets: ${borrower};`, exact: false });
 const prove = (page: Page) =>
-  page.getByRole("button", { name: /^Authenticate collateral/ });
-const fund = (page: Page) => page.getByRole("button", { name: /^Fund vault/ });
+  page
+    .getByRole("dialog", { name: "ETH market", exact: true })
+    .getByRole("button", { name: /^Verify collateral/ });
+const fund = (page: Page) =>
+  page
+    .getByRole("dialog", { name: "ETH market", exact: true })
+    .getByRole("button", { name: /^Add collateral/ });
 async function install(page: Page, funded = true, restoreMode = "success") {
+  await installMarketCatalog(page, {
+    ...configFixture,
+    mode: "public",
+    near: {
+      ...configFixture.near,
+      networkId: "testnet",
+      borrowerId: borrower,
+      lenderId: lender,
+    },
+  });
   await page.route("**/api/config*", (r) =>
     r.fulfill({
       json: {
@@ -98,6 +120,8 @@ async function install(page: Page, funded = true, restoreMode = "success") {
         body: `
     const borrower = ${JSON.stringify(borrower)}, lender = ${JSON.stringify(lender)}, restoreMode = ${JSON.stringify(restoreMode)};
     export class NearConnector {
+            whenManifestLoaded = Promise.resolve();
+            availableWallets = [{ manifest: { id: 'meteor-wallet', name: 'Meteor' } }];
       listeners = {};
       constructor(options) { globalThis.restoreFixture.options.push(options); }
       on(name, cb) { this.listeners[name] = cb; }
@@ -130,7 +154,7 @@ async function install(page: Page, funded = true, restoreMode = "success") {
   `,
       }),
   );
-  await page.goto("/");
+  await page.goto("/app.html");
 }
 async function counters(page: Page) {
   return page.evaluate(
@@ -151,14 +175,16 @@ async function counters(page: Page) {
   );
 }
 async function connectNear(page: Page) {
-  await page
-    .getByRole("button", { name: "Connect NEAR testnet", exact: true })
-    .click();
+  await openWallets(page);
+  await page.getByRole("button", { name: "Connect NEAR", exact: true }).click();
+  await page.getByRole("button", { name: "Meteor", exact: true }).click();
   await expect
     .poll(async () => (await counters(page)).connects, { timeout: 3000 })
     .toBe(1);
   await expect(connected(page)).toBeVisible({ timeout: 3000 });
   await expect(page.getByRole("alert")).toHaveCount(0);
+  await closePanel(page);
+  await openPosition(page);
 }
 test.setTimeout(20000);
 test("@wallet-restore-red reload restores exact second imported NEAR account without prompting", async ({
@@ -169,6 +195,7 @@ test("@wallet-restore-red reload restores exact second imported NEAR account wit
   await expect(prove(page)).toBeEnabled({ timeout: 3000 });
   await page.reload();
   await expect(connected(page)).toBeVisible({ timeout: 3000 });
+  await openPosition(page);
   await expect(prove(page)).toBeEnabled();
   expect(await counters(page)).toMatchObject({
     connects: 0,
@@ -184,13 +211,15 @@ test("@wallet-restore-red reload restores authorized Ethereum funding without re
   page,
 }) => {
   await install(page, false);
-  await page
-    .getByRole("button", { name: "Connect Ethereum wallet", exact: true })
-    .click();
+  await connectNear(page);
+  await connectEthereum(page);
+  await openPosition(page);
   await expect(fund(page)).toBeEnabled({ timeout: 3000 });
   await expect(page.getByRole("alert")).toHaveCount(0);
   expect((await counters(page)).requests).toContain("eth_requestAccounts");
   await page.reload();
+  await expect(connected(page)).toBeVisible({ timeout: 3000 });
+  await openPosition(page);
   await expect(fund(page)).toBeEnabled({ timeout: 3000 });
   expect((await counters(page)).requests).toEqual([
     "eth_accounts",
@@ -203,11 +232,17 @@ test("@wallet-restore successful disconnect remains disconnected after reload", 
 }) => {
   await install(page);
   await connectNear(page);
+  await openWallets(page);
   await page
     .getByRole("button", { name: "Disconnect NEAR", exact: true })
     .click();
   await page.reload();
-  await expect(prove(page)).toBeDisabled({ timeout: 3000 });
+  await expect(
+    page.getByRole("heading", { name: "Connect your loan account" }),
+  ).toBeVisible({ timeout: 3000 });
+  await expect(
+    page.getByRole("button", { name: /^Verify collateral/ }),
+  ).toHaveCount(0);
   await expect(connected(page)).toHaveCount(0);
   expect(
     await page.evaluate((key) => localStorage.getItem(key), hintKey),
@@ -249,7 +284,12 @@ for (const bad of [
       { key: hintKey, bad },
     );
     await page.reload();
-    await expect(prove(page)).toBeDisabled({ timeout: 3000 });
+    await expect(
+      page.getByRole("heading", { name: "Connect your loan account" }),
+    ).toBeVisible({ timeout: 3000 });
+    await expect(
+      page.getByRole("button", { name: /^Verify collateral/ }),
+    ).toHaveCount(0);
     await expect(connected(page)).toHaveCount(0);
     expect(await counters(page)).toMatchObject({
       connects: 0,
@@ -264,12 +304,20 @@ for (const mode of ["revoked", "reject", "hang"])
   }) => {
     await install(page, false, mode);
     await connectNear(page);
-    await page
-      .getByRole("button", { name: "Connect Ethereum wallet", exact: true })
-      .click();
+    await connectEthereum(page);
+    await openPosition(page);
     await expect(fund(page)).toBeEnabled({ timeout: 3000 });
     await page.reload();
-    await expect(fund(page)).toBeEnabled({ timeout: 3000 });
+    await openWallets(page);
+    await expect(
+      page.getByRole("button", {
+        name: "Choose Ethereum account",
+        exact: true,
+      }),
+    ).toBeEnabled({ timeout: 3000 });
+    await expect(
+      page.getByRole("dialog", { name: "Wallets", exact: true }),
+    ).toContainText(evm);
     await expect(connected(page)).toHaveCount(0);
     expect(await counters(page)).toMatchObject({
       connects: 0,

@@ -1,3 +1,12 @@
+import {
+  installReadOnlyNearParticipant,
+  submitReviewed,
+  openRecovery,
+  openEvidence,
+  openPosition,
+  closePanel,
+} from "./ui-helpers";
+import { installMarketCatalog } from "./market-fixtures";
 /** Controlled API/wallet boundaries only. These fixtures are not chain evidence. */
 import { expect, test, type Page } from "@playwright/test";
 import {
@@ -13,6 +22,7 @@ test.use({ actionTimeout: 4000 });
 test.beforeEach(async ({ page }) => {
   await page.clock.install({ time: new Date("2026-11-13T00:00:00Z") });
   await page.clock.pauseAt(new Date("2026-11-13T00:00:01Z"));
+  await installMarketCatalog(page, configFixture);
   await page.route("**/api/config*", (r) => r.fulfill({ json: configFixture }));
   await page.route("**/api/state*", (r) => r.fulfill({ json: stateFixture }));
   await page.route("**/api/receipts*", (r) => r.fulfill({ json: [] }));
@@ -24,9 +34,9 @@ const toggle = (page: Page) =>
 test("@rino-ui theme choice persists on reload and storage denial still allows rendering", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto("/app.html");
   await expect(
-    page.getByRole("heading", { name: "Your position", exact: true }),
+    page.getByRole("heading", { name: "Dashboard", exact: true }),
   ).toBeVisible({ timeout: 4000 });
   await toggle(page).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
@@ -62,20 +72,19 @@ test("@rino-ui switching theme while an action is pending preserves disabled con
   await page.route("**/api/actions", () => {
     posts++;
   });
-  await page.goto("/");
-  await page
-    .getByRole("button", { name: "Repay 101 CREDIT", exact: true })
-    .click();
+  await page.goto("/app.html");
+  await submitReviewed(
+    page,
+    page.getByRole("button", { name: "Repay loan", exact: true }),
+  );
   await expect.poll(() => posts, { timeout: 4000 }).toBe(1);
   const before = reads;
   await toggle(page).click();
   await expect(
-    page.getByRole("button", { name: "Waiting for receipts…", exact: true }),
+    page.getByRole("button", { name: "Confirming", exact: true }),
   ).toBeDisabled();
-  await page.getByRole("link", { name: "Activity", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Open evidence", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await openEvidence(page);
   await page.keyboard.press("Escape");
   await toggle(page).click();
   expect(reads).toBe(before);
@@ -140,7 +149,12 @@ test("@rino-ui activity links use actual hashes without mounting queries", async
             : receipts,
     });
   });
-  await page.goto("/");
+  await installMarketCatalog(page, {
+    near: { ...configFixture.near, networkId: "testnet" },
+  });
+  await installReadOnlyNearParticipant(page);
+  await page.goto("/app.html");
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
   const activity = page.getByRole("table", { name: "Transaction activity" });
   await expect(activity).toBeVisible({ timeout: 4000 });
   await expect(activity.locator("a")).toHaveCount(2);
@@ -152,10 +166,8 @@ test("@rino-ui activity links use actual hashes without mounting queries", async
   ).toHaveAttribute("href", `https://sepolia.etherscan.io/tx/${ethHash}`);
   const before = reads;
   await toggle(page).click();
-  await page.getByRole("link", { name: "Activity", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Open evidence", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Activity", exact: true }).click();
+  await openEvidence(page);
   await expect(page.getByRole("dialog").locator("a")).toHaveCount(2);
   await page.keyboard.press("Escape");
   expect(reads).toBe(before);
@@ -165,13 +177,14 @@ test("@rino-ui activity links use actual hashes without mounting queries", async
 test("@rino-ui both themes reflow with long IDs and retain keyboard evidence/recovery access", async ({
   page,
 }, info) => {
-  const borrower = `${"long-borrower-".repeat(3)}.testnet`;
+  const borrower = `${"long-borrower-".repeat(3)}account.testnet`;
   const config = {
     ...configFixture,
     mode: "public",
     capabilities: { operations: true },
     near: { ...configFixture.near, networkId: "testnet", borrowerId: borrower },
   };
+  await installMarketCatalog(page, config);
   await page.route("**/api/config*", (r) => r.fulfill({ json: config }));
   await page.route("**/api/state*", (r) =>
     r.fulfill({
@@ -196,15 +209,16 @@ test("@rino-ui both themes reflow with long IDs and retain keyboard evidence/rec
   await page.route("**/api/operations*", (r) =>
     r.fulfill({ json: [operationFixture] }),
   );
-  await page.goto("/");
+  await installReadOnlyNearParticipant(page, borrower);
+  await page.goto("/app.html");
   await expect(
-    page.getByRole("heading", { name: "Your position", exact: true }),
+    page.getByRole("heading", { name: "Dashboard", exact: true }),
   ).toBeVisible({ timeout: 4000 });
   await expect(
-    page.getByRole("button", { name: "Repay 203 CREDIT", exact: true }),
-  ).toBeDisabled();
+    page.getByRole("button", { name: "Repay loan", exact: true }),
+  ).toHaveCount(0);
   await expect(
-    page.getByText("An operation needs checking", { exact: false }).first(),
+    page.getByText("Outcome needs checking", { exact: false }).first(),
   ).toBeVisible();
   for (const theme of ["light", "dark"]) {
     if (theme === "dark") await toggle(page).click();
@@ -214,7 +228,7 @@ test("@rino-ui both themes reflow with long IDs and retain keyboard evidence/rec
         page.getByRole("link", { name: "Rino home", exact: true }),
       ).toBeVisible();
       await expect(
-        page.getByRole("button", { name: "Connect NEAR testnet", exact: true }),
+        page.getByRole("button", { name: /^Wallets:/ }),
       ).toBeVisible();
       expect(
         await page.evaluate(
@@ -236,17 +250,19 @@ test("@rino-ui both themes reflow with long IDs and retain keyboard evidence/rec
         fullPage: true,
       });
     }
+    await page.getByRole("button", { name: "Activity", exact: true }).click();
     await page
-      .getByRole("button", { name: "Open evidence", exact: true })
+      .getByRole("button", { name: "View all evidence", exact: true })
       .focus();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("dialog")).toContainText(borrower);
     await page.keyboard.press("Escape");
     await expect(
-      page.getByRole("button", { name: "Open evidence", exact: true }),
+      page.getByRole("button", { name: "View all evidence", exact: true }),
     ).toBeFocused();
     await page
-      .getByRole("link", { name: "Check operation recovery", exact: true })
+      .getByRole("button", { name: "Check request", exact: true })
+      .first()
       .focus();
     await page.keyboard.press("Enter");
     await expect(
@@ -255,9 +271,14 @@ test("@rino-ui both themes reflow with long IDs and retain keyboard evidence/rec
     await expect(
       page.getByRole("textbox", { name: /Transaction hash .* step 1/ }),
     ).toBeVisible();
+    await closePanel(page);
   }
+  await openPosition(page);
+  await page.getByText("Loan terms", { exact: true }).click();
   await expect(page.getByText("42.5%", { exact: true })).toBeVisible();
-  await expect(page.getByText("600 sec", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("10 minutes", { exact: true }).last(),
+  ).toBeVisible();
 });
 
 // Catches a historical maturity being shown as an active countdown after closure.
@@ -285,19 +306,21 @@ test("@rino-ui closed future maturity has no remaining countdown while active ch
       : stateFixture;
     return r.fulfill({ json: state });
   });
-  await page.goto("/");
-  const panel = page.locator(".action-panel");
-  await expect(
-    panel.getByRole("heading", { name: "Loan closed", exact: true }),
-  ).toBeVisible({ timeout: 4000 });
+  await page.goto("/app.html");
+  await openPosition(page);
+  const panel = page.getByRole("dialog");
+  await expect(panel.getByText("Closed", { exact: true }).first()).toBeVisible({
+    timeout: 4000,
+  });
   await expect(panel.getByText(/s remaining$/)).toHaveCount(0, {
     timeout: 4000,
   });
   terminal = false;
   await page.reload();
-  await expect(
-    panel.getByText("Maturity · chain time", { exact: true }),
-  ).toBeVisible({ timeout: 4000 });
+  await openPosition(page);
+  await expect(panel.getByText("Time remaining", { exact: true })).toBeVisible({
+    timeout: 4000,
+  });
   await expect(
     panel.getByText("100s remaining", { exact: true }),
   ).toBeVisible();
@@ -345,19 +368,19 @@ for (const [feeWei, display] of [
       detail: "Fixture fee evidence only.",
     };
     await page.route("**/api/receipts*", (r) => r.fulfill({ json: [receipt] }));
-    await page.goto("/");
+    await page.goto("/app.html");
+    await openPosition(page);
+    await page.getByText("Settlement details", { exact: true }).click();
     const fees = page
-      .locator(".settlement-box dl > div")
+      .locator(".definitions > div")
       .filter({ has: page.getByText("Fees paid", { exact: true }) });
     await expect
       .soft(fees.locator("dd"))
       .toHaveText(`${display} ETH`, { timeout: 4000 });
-    await page
-      .getByRole("button", { name: "Open evidence", exact: true })
-      .click();
+    await openEvidence(page);
     const dialog = page.getByRole("dialog");
     await expect(
-      dialog.getByText(`Fee ${display} ETH`, { exact: true }),
+      dialog.getByText(new RegExp(`Fee ${display.replace(".", "\\.")} ETH$`)),
     ).toBeVisible({ timeout: 4000 });
     await dialog
       .getByText("Raw state & artifact evidence", { exact: true })
@@ -372,11 +395,18 @@ for (const [feeWei, display] of [
 test("@rino-ui idle recovery stays compact and terminal evidence expands on demand", async ({
   page,
 }) => {
+  await installMarketCatalog(page, {
+    ...configFixture,
+    mode: "public",
+    near: { ...configFixture.near, networkId: "testnet" },
+    capabilities: { operations: true },
+  });
   await page.route("**/api/config*", (r) =>
     r.fulfill({
       json: {
         ...configFixture,
         mode: "public",
+        near: { ...configFixture.near, networkId: "testnet" },
         capabilities: { operations: true },
       },
     }),
@@ -399,7 +429,9 @@ test("@rino-ui idle recovery stays compact and terminal evidence expands on dema
         : [],
     }),
   );
-  await page.goto("/");
+  await installReadOnlyNearParticipant(page);
+  await page.goto("/app.html");
+  await openRecovery(page);
   const region = page.getByRole("region", { name: "Operation recovery" });
   await expect(region).toBeVisible({ timeout: 4000 });
   await expect(
@@ -419,6 +451,7 @@ test("@rino-ui idle recovery stays compact and terminal evidence expands on dema
   ).toBeVisible();
   terminal = true;
   await page.reload();
+  await openRecovery(page);
   await expect(
     region.getByText("Final callback returned false.", { exact: true }),
   ).toBeHidden();

@@ -48,13 +48,15 @@ function fixture(
   const listeners = new Map<string, (data: unknown) => void>();
   const nearListeners = new Map<string, (data: any) => void>();
   const wallet = {
-    manifest: { id: "meteor-wallet" },
+    manifest: { id: "meteor-wallet", name: "Meteor" },
     getAccounts: vi.fn(async () => [
       { accountId: "lender.test" },
       { accountId: "borrower.test" },
     ]),
   };
   const sdk = {
+    whenManifestLoaded: Promise.resolve(),
+    availableWallets: [wallet],
     on: vi.fn((name: string, cb: (data: any) => void) =>
       nearListeners.set(name, cb),
     ),
@@ -132,6 +134,41 @@ async function settle() {
   for (let i = 0; i < 15; i++) await Promise.resolve();
 }
 afterEach(() => vi.useRealTimers());
+it("connects only the deliberately selected available NEAR wallet", async () => {
+  const f = fixture();
+  f.start();
+  await settle();
+  await f.session.connectNear(config, "meteor-wallet");
+  expect(f.sdk.connect).toHaveBeenCalledWith({ walletId: "meteor-wallet" });
+  f.sdk.connect.mockClear();
+  await expect(f.session.connectNear(config, "missing-wallet")).rejects.toThrow(
+    /available/i,
+  );
+  expect(f.sdk.connect).not.toHaveBeenCalled();
+});
+it("keeps an explicitly disconnected Ethereum session closed across late restoration and provider events", async () => {
+  const pending = deferred<unknown>();
+  const f = fixture({ evm: pending.promise });
+  f.start();
+  await settle();
+  f.session.disconnectEvm();
+  pending.resolve([account]);
+  f.listeners.get("accountsChanged")?.([account]);
+  f.listeners.get("chainChanged")?.("0xaa36a7");
+  await settle();
+  expect(f.state().evmAccount).toBeUndefined();
+  expect(f.state().evmChainId).toBeUndefined();
+  expect(f.provider.request.mock.calls.map(([p]) => p.method)).toEqual([
+    "eth_accounts",
+  ]);
+  await f.session.connectEvm(
+    async () => [other],
+    async () => 11155111,
+  );
+  expect(f.state().evmAccount).toBe(other);
+  f.listeners.get("accountsChanged")?.([account]);
+  expect(f.state().evmAccount).toBe(account);
+});
 it("restores exact hinted second account and silently checks Ethereum", async () => {
   const f = fixture({ stored: hint });
   f.start();

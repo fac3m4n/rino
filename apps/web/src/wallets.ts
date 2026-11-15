@@ -11,6 +11,7 @@ import type { Config, WalletAction } from "@rino/coordinator/api";
 import { ActionFailure, submissionFailure, userRejected } from "./outcomes";
 
 import { WalletSession, type Injected } from "./wallet-session";
+import { loadNearWalletOptions } from "./wallet-selector";
 
 export type WalletProgress = (event: {
   step: number;
@@ -116,12 +117,18 @@ export function useWallets(config?: Config) {
     nearAccount,
     evmAccount,
     evmChainId,
-    async connectNear(config: Config) {
+    async nearWalletOptions(config: Config) {
+      return loadNearWalletOptions(await session.getConnector(config));
+    },
+    async connectNear(config: Config, walletId?: string) {
       // The connector emits the validated signIn accounts before resolving.
-      await session.connectNear(config);
+      await session.connectNear(config, walletId);
     },
     async disconnectNear() {
       await session.disconnectNear();
+    },
+    disconnectEvm() {
+      session.disconnectEvm();
     },
     async connectEvm() {
       const client = createWalletClient({

@@ -70,6 +70,7 @@ export class WalletSession {
   private nearRevision = 0;
   private evmRevision = 0;
   private evmOperation = 0;
+  private evmDisconnected = false;
   private evmChainEventRevision = 0;
   private connector?: Promise<NearConnector>;
   private sdk?: NearConnector;
@@ -233,6 +234,7 @@ export class WalletSession {
       const { provider } = this.environment();
       if (provider) {
         const event = (update: Partial<Snapshot>) => {
+          if (this.evmDisconnected) return;
           this.evmRevision++;
           this.update(update);
         };
@@ -266,6 +268,7 @@ export class WalletSession {
           this.lifecycle === lifecycle &&
           this.evmRevision === revision;
         const restore = async () => {
+          if (this.evmDisconnected) return {};
           const accounts = await provider.request({ method: "eth_accounts" });
           const evmAccount = Array.isArray(accounts)
             ? address(accounts[0])
@@ -342,7 +345,7 @@ export class WalletSession {
       }
     };
   }
-  async connectNear(config: Config) {
+  async connectNear(config: Config, walletId?: string) {
     if (this.operation)
       throw new Error("A NEAR wallet operation is already in progress.");
     const operation = {
@@ -355,6 +358,15 @@ export class WalletSession {
     const lifecycle = this.lifecycle;
     try {
       const sdk = await this.getConnector(config);
+      if (walletId) {
+        await sdk.whenManifestLoaded;
+        if (
+          !sdk.availableWallets.some(
+            (wallet) => wallet.manifest.id === walletId,
+          )
+        )
+          throw new Error("The selected NEAR wallet is not available.");
+      }
       if (!this.active || lifecycle !== this.lifecycle)
         throw new Error("Wallet session changed before connection.");
       const listener = (payload: EventMap["wallet:signIn"]) => {
@@ -377,7 +389,8 @@ export class WalletSession {
       };
       this.signIn = listener;
       sdk.on("wallet:signIn", listener);
-      await sdk.connect();
+      if (walletId) await sdk.connect({ walletId });
+      else await sdk.connect();
       if (
         this.active &&
         lifecycle === this.lifecycle &&
@@ -422,6 +435,7 @@ export class WalletSession {
     getChainId: () => Promise<number>,
   ) {
     const revision = this.invalidateEvm();
+    this.evmDisconnected = false;
     const operation = this.evmOperation;
     const lifecycle = this.lifecycle;
     const current = () =>
@@ -447,6 +461,11 @@ export class WalletSession {
   invalidateEvm() {
     this.evmOperation++;
     return ++this.evmRevision;
+  }
+  disconnectEvm() {
+    this.evmDisconnected = true;
+    this.invalidateEvm();
+    this.update({ evmAccount: undefined, evmChainId: undefined });
   }
   setEvm(revision: number, evmAccount?: Address, evmChainId?: number) {
     if (revision === this.evmRevision) this.update({ evmAccount, evmChainId });

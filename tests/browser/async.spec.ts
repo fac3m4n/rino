@@ -1,3 +1,13 @@
+import {
+  installReadOnlyNearParticipant,
+  submitReviewed,
+  openRecovery,
+  openEvidence,
+  openPosition,
+  closePanel,
+  localActor,
+} from "./ui-helpers";
+import { installMarketCatalog } from "./market-fixtures";
 /** UI-only transport fixtures: these responses are not chain evidence. */
 import { test, expect, type Route } from "@playwright/test";
 import {
@@ -51,6 +61,7 @@ test.setTimeout(30000);
 test.beforeEach(async ({ page }) => {
   await page.clock.install({ time: new Date("2026-11-12T00:00:00Z") });
   await page.clock.pauseAt(new Date("2026-11-12T00:00:01Z"));
+  await installMarketCatalog(page, configFixture);
   await page.route("**/api/config*", (r) => r.fulfill({ json: configFixture }));
 });
 test("@async late pre-action snapshot cannot overwrite a newer authenticated state", async ({
@@ -81,16 +92,19 @@ test("@async late pre-action snapshot cannot overwrite a newer authenticated sta
       },
     });
   });
-  await page.goto("/");
+  await page.goto("/app.html");
   await expect(
-    page.getByRole("button", { name: "Repay 101 CREDIT", exact: true }),
+    page.getByRole("button", { name: "Repay loan", exact: true }),
   ).toBeEnabled();
   holdNext = true;
   await page.clock.fastForward(2501);
   await expect.poll(() => !!held, { timeout: 3000 }).toBe(true);
-  await page
-    .getByRole("button", { name: "Repay 101 CREDIT", exact: true })
-    .click();
+  await submitReviewed(
+    page,
+    page.getByRole("button", { name: "Repay loan", exact: true }),
+  );
+  await openPosition(page);
+  await page.getByText("Settlement details", { exact: true }).click();
   await expect(page.getByTestId("settlement-stage")).toHaveText(
     "NEAR-authenticated release",
   );
@@ -113,9 +127,7 @@ test("@async late pre-action snapshot cannot overwrite a newer authenticated sta
   await expect(
     page.getByText("Account nonce", { exact: true }).locator(".."),
   ).toContainText("1");
-  await page
-    .getByRole("button", { name: "Open evidence", exact: true })
-    .click();
+  await openEvidence(page);
   await expect(page.getByRole("dialog")).toContainText(
     "UI fixture confirmed receipt",
   );
@@ -137,13 +149,14 @@ test("@async timed-out mutation remains uncertain and never retries while refres
     posts++;
     stalled = true;
   });
-  await page.goto("/");
+  await page.goto("/app.html");
   await expect(
-    page.getByRole("button", { name: "Repay 101 CREDIT", exact: true }),
+    page.getByRole("button", { name: "Repay loan", exact: true }),
   ).toBeEnabled();
-  await page
-    .getByRole("button", { name: "Repay 101 CREDIT", exact: true })
-    .click();
+  await submitReviewed(
+    page,
+    page.getByRole("button", { name: "Repay loan", exact: true }),
+  );
   await expect.poll(() => posts, { timeout: 3000 }).toBe(1);
   await page.clock.fastForward(ACTION_TIMEOUT_MS + 1);
   await expect(page.getByRole("alert")).toContainText("uncertain", {
@@ -157,16 +170,18 @@ test("@async timed-out mutation remains uncertain and never retries while refres
     timeout: 3000,
   });
   await expect(
-    page.getByRole("button", { name: "Repay 101 CREDIT", exact: true }),
-  ).toBeDisabled({ timeout: 3000 });
+    page.getByRole("button", { name: "Repay loan", exact: true }),
+  ).toHaveCount(0, { timeout: 3000 });
   expect(posts).toBe(1);
   stalled = false;
   current = repaid;
   receipts = [{ ...receipt, action: "repay" }];
+  await openRecovery(page);
   await page
     .getByRole("button", { name: "Refresh chain state", exact: true })
     .click();
   await expect(page.getByTestId("loan-debt")).toHaveText("0 CREDIT");
+  await closePanel(page);
   await expect(
     page.getByRole("button", { name: "Release collateral", exact: true }),
   ).toBeEnabled();
@@ -191,16 +206,18 @@ test("@async completed action with stalled final refresh pauses controls until a
       },
     });
   });
-  await page.goto("/");
+  await page.goto("/app.html");
   await expect(
-    page.getByRole("button", { name: "Repay 101 CREDIT", exact: true }),
+    page.getByRole("button", { name: "Repay loan", exact: true }),
   ).toBeEnabled();
-  await page
-    .getByRole("button", { name: "Repay 101 CREDIT", exact: true })
-    .click();
+  await submitReviewed(
+    page,
+    page.getByRole("button", { name: "Repay loan", exact: true }),
+  );
   await expect(
-    page.getByText("Confirmed fixture repay", { exact: true }),
-  ).toBeVisible();
+    page.getByRole("region", { name: "Feedback", exact: true }),
+  ).toContainText("Refreshing results");
+  await expect(page.getByTestId("loan-debt")).toHaveText("0 CREDIT");
   await page.clock.fastForward(GET_TIMEOUT_MS + 1);
   await expect(page.getByRole("alert")).toBeVisible({ timeout: 3000 });
   await page.clock.fastForward(GET_TIMEOUT_MS + 1);
@@ -209,7 +226,8 @@ test("@async completed action with stalled final refresh pauses controls until a
   ).toHaveCount(0, { timeout: 3000 });
   await expect(
     page.getByRole("button", { name: "Release collateral", exact: true }),
-  ).toBeDisabled({ timeout: 3000 });
+  ).toHaveCount(0, { timeout: 3000 });
+  await openRecovery(page);
   await expect(
     page.getByRole("button", { name: "Refresh chain state", exact: true }),
   ).toBeEnabled();
@@ -230,16 +248,24 @@ test("@async lender funding remains reachable with borrower ETH already deposite
   };
   await page.route("**/api/state*", (r) => r.fulfill({ json: offered }));
   await page.route("**/api/receipts", (r) => r.fulfill({ json: [] }));
-  await page.goto("/");
-  await page.getByRole("button", { name: "Lender", exact: true }).click();
+  await page.goto("/app.html");
+  await localActor(page, "Lender");
+  await openPosition(page);
   await expect(
     page.getByRole("button", { name: "Fund offer + vault", exact: true }),
   ).toBeEnabled();
-  await expect(page.getByTestId("vault-balance")).toHaveText("0.12 ETH");
+  await expect(
+    page.getByText("ETH collateral", { exact: true }).locator(".."),
+  ).toContainText("0.12 ETH");
 });
 test("@async public lender can find liquidity funding after borrower ETH deposit", async ({
   page,
 }) => {
+  await installMarketCatalog(page, {
+    ...configFixture,
+    mode: "public",
+    near: { ...configFixture.near, networkId: "testnet" },
+  });
   await page.route("**/api/config*", (r) =>
     r.fulfill({
       json: {
@@ -264,14 +290,22 @@ test("@async public lender can find liquidity funding after borrower ETH deposit
     }),
   );
   await page.route("**/api/receipts", (r) => r.fulfill({ json: [] }));
-  await page.goto("/");
-  await page.getByRole("button", { name: "Lender", exact: true }).click();
+  await installReadOnlyNearParticipant(page, configFixture.near.lenderId);
+  await page.goto("/app.html");
+  await page.getByRole("button", { name: "Lend", exact: true }).click();
+  await openPosition(page);
   const funding = page.getByRole("button", {
     name: "Fund CREDIT offer",
     exact: true,
   });
   await expect(funding).toBeVisible();
-  await expect(funding).toHaveAttribute("title", /lender.test/);
+  await funding.click();
+  await expect(page.getByRole("dialog")).toContainText(
+    configFixture.near.lenderId,
+  );
+  await expect(
+    page.getByRole("button", { name: "Confirm action", exact: true }),
+  ).toBeEnabled();
 });
 
 test("@continue never-received POST permits deliberate continuation only after fresh ready idle reads", async ({
@@ -284,6 +318,11 @@ test("@continue never-received POST permits deliberate continuation only after f
     posts = 0;
   let current = stateFixture;
   let receipts: Receipt[] = [];
+  await installMarketCatalog(page, {
+    ...configFixture,
+    ready: configReady,
+    readinessErrors: configReady ? [] : ["Fixture configuration is unready"],
+  });
   await page.route("**/api/config*", (r) =>
     online
       ? r.fulfill({
@@ -323,9 +362,9 @@ test("@continue never-received POST permits deliberate continuation only after f
       },
     });
   });
-  await page.goto("/");
+  await page.goto("/app.html");
   const repayButton = page.getByRole("button", {
-    name: "Repay 101 CREDIT",
+    name: "Repay loan",
     exact: true,
   });
   const continueButton = page.getByRole("button", {
@@ -334,7 +373,7 @@ test("@continue never-received POST permits deliberate continuation only after f
   });
   await expect(repayButton).toBeEnabled();
   await expect(continueButton).toHaveCount(0);
-  await repayButton.click();
+  await submitReviewed(page, repayButton);
   await expect.poll(() => posts, { timeout: 3000 }).toBe(1);
   await page.clock.fastForward(ACTION_TIMEOUT_MS + 1);
   await expect(page.getByRole("alert")).toContainText("uncertain", {
@@ -344,10 +383,11 @@ test("@continue never-received POST permits deliberate continuation only after f
   await expect(
     page.getByRole("button", { name: "Waiting for receipts…" }),
   ).toHaveCount(0, { timeout: 3000 });
+  await openRecovery(page);
   // The pre-action ready snapshot cannot authorize recovery while new reads are unavailable.
   await expect(continueButton).toBeVisible({ timeout: 3000 });
   await expect(continueButton).toBeDisabled();
-  await expect(repayButton).toBeDisabled();
+  await expect(repayButton).toHaveCount(0);
   expect(posts).toBe(1);
   const checked = async () => {
     const response = page.waitForResponse(
@@ -380,15 +420,18 @@ test("@continue never-received POST permits deliberate continuation only after f
   stateReady = true;
   await checked();
   await expect(continueButton).toBeEnabled();
-  await expect(repayButton).toBeDisabled();
+  await expect(repayButton).toHaveCount(0);
   expect(posts).toBe(1);
   await continueButton.click();
   await page.clock.runFor(50);
   expect(posts).toBe(1);
+  await closePanel(page);
   await expect(page.getByTestId("loan-debt")).toHaveText("101 CREDIT");
   await expect(repayButton).toBeEnabled();
   await expect(page.getByTestId("vault-balance")).toHaveText("0.12 ETH");
+  await openPosition(page);
   await expect(page.getByTestId("credit-balance")).toHaveText("101 CREDIT");
+  await page.getByText("Vault & verification", { exact: true }).click();
   await expect(
     page.getByText("Account nonce", { exact: true }).locator(".."),
   ).toContainText("0");
@@ -402,7 +445,8 @@ test("@continue never-received POST permits deliberate continuation only after f
       .getByRole("status")
       .filter({ hasText: "a late original request may still complete" }),
   ).toBeVisible();
-  await repayButton.click();
+  await closePanel(page);
+  await submitReviewed(page, repayButton);
   await expect.poll(() => posts, { timeout: 3000 }).toBe(2);
   await expect(page.getByTestId("loan-debt")).toHaveText("0 CREDIT");
 });

@@ -1,29 +1,494 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f6f7fb" />
-    <script>
-      (() => {
-        let theme = "light";
-        try {
-          if (localStorage.getItem("rino.theme.v1") === "dark") theme = "dark";
-        } catch {}
-        document.documentElement.dataset.theme = theme;
-        document.querySelector('meta[name="theme-color"]').content =
-          theme === "dark" ? "#111827" : "#f6f7fb";
-      })();
-    </script>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#10121C" />
     <meta
       name="description"
-      content="Rino: Ethereum collateral and NEAR credit. A verifiable test-asset credit line."
+      content="Borrow CREDIT on NEAR against native ETH held in a dedicated Rino-controlled Ethereum vault."
     />
-    <title>Rino — Your position</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>ЯINO — Borrow CREDIT. Backed by ETH.</title>
+    <link rel="stylesheet" href="/src/landing.css" />
+    <link rel="icon" href="/favicon.svg" />
   </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+  <body class="landing-page">
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="header-surface">
+      <div class="site-header site-wrap">
+        <a class="brand" href="/" aria-label="Rino home" id="site-brand"
+          ><span class="brand-mark" aria-hidden="true"
+            ><svg viewBox="6 3 28 25" fill="none">
+              <path
+                class="brand-body"
+                d="M6 28V17L16 10H27L34 18L29 28H20L16 22L11 28Z"
+                fill="currentColor"
+              />
+              <path
+                d="M27 10L31 3L32 14ZM14 10L16 6L20 10Z"
+                fill="currentColor"
+              />
+              <circle
+                cx="27"
+                cy="18"
+                r="1.4"
+                fill="var(--brand-eye, var(--surface))"
+              /></svg></span
+          ><span class="brand-name">ЯINO</span></a
+        >
+        <nav aria-label="Website navigation">
+          <a href="#product">The app</a><a href="#terms">The terms</a
+          ><a href="#questions">Questions</a>
+        </nav>
+        <a class="button site-launch" href="/app.html"
+          >Launch app <span aria-hidden="true">↗</span></a
+        >
+      </div>
+    </header>
+    <main id="main" tabindex="-1">
+      <div class="hero-surface" data-depth="0">
+        <section class="site-hero site-wrap" aria-labelledby="hero-heading">
+          <div class="hero-copy" data-depth="4">
+            <div class="hero-kicker">
+              <span class="kicker-rule" aria-hidden="true"></span> CROSS-CHAIN
+              LENDING
+            </div>
+            <h1 id="hero-heading">
+              <span class="hero-line"><span>Borrow CREDIT.</span></span
+              ><span class="hero-line"><span>Backed by ETH.</span></span>
+            </h1>
+            <p>Ethereum collateral.<br />NEAR borrowing.</p>
+            <div class="hero-actions">
+              <a class="button hero-launch" href="/app.html"
+                >Launch app <span aria-hidden="true">↗</span></a
+              ><a class="hero-secondary" href="#product"
+                >Explore ЯINO <span aria-hidden="true">↓</span></a
+              >
+            </div>
+          </div>
+          <div
+            class="hero-stage"
+            aria-label="Illustrative public test offer backed by ETH collateral"
+          >
+            <canvas
+              id="credit-field"
+              data-depth="2"
+              aria-hidden="true"
+            ></canvas>
+            <div
+              class="stage-coordinate stage-coordinate-top"
+              data-depth="5"
+              aria-hidden="true"
+            >
+              <span></span><span></span>
+            </div>
+            <div class="offer-object" data-depth="3">
+              <div class="object-top">
+                <span
+                  class="brand brand--compact"
+                  id="offer-brand"
+                  aria-label="Rino"
+                  role="img"
+                  ><span class="brand-mark" aria-hidden="true"
+                    ><svg viewBox="6 3 28 25" fill="none">
+                      <path
+                        class="brand-body"
+                        d="M6 28V17L16 10H27L34 18L29 28H20L16 22L11 28Z"
+                        fill="currentColor"
+                      />
+                      <path
+                        d="M27 10L31 3L32 14ZM14 10L16 6L20 10Z"
+                        fill="currentColor"
+                      />
+                      <circle
+                        cx="27"
+                        cy="18"
+                        r="1.4"
+                        fill="var(--brand-eye, var(--surface))"
+                      /></svg></span
+                  ><span class="brand-name">ЯINO</span></span
+                ><span class="object-sample">Illustrative offer</span>
+              </div>
+              <div class="object-amount">
+                <span>100</span><span>CREDIT</span>
+              </div>
+              <div class="object-sub">One fixed loan. One dedicated vault.</div>
+              <dl class="object-terms">
+                <div>
+                  <dt>Total repayment</dt>
+                  <dd>101 CREDIT</dd>
+                </div>
+                <div>
+                  <dt>Loan term</dt>
+                  <dd>24 hours</dd>
+                </div>
+              </dl>
+              <a href="#terms" class="object-link"
+                >View loan terms <span aria-hidden="true">↗</span></a
+              >
+            </div>
+            <div
+              class="stage-coordinate stage-coordinate-bottom"
+              data-depth="5"
+              aria-hidden="true"
+            >
+              <span></span><span></span>
+            </div>
+          </div>
+          <div class="hero-bottom">
+            <p>
+              Borrow CREDIT on NEAR against native ETH<br />
+              held in a dedicated Rino-controlled Ethereum vault.
+            </p>
+            <div
+              class="network-rail"
+              role="img"
+              aria-label="Ethereum collateral enables CREDIT borrowing on NEAR"
+            >
+              <span
+                ><span class="network-logo"
+                  ><img
+                    src="/assets/ethereum.png"
+                    alt=""
+                    width="16"
+                    height="24" /></span
+                >Ethereum</span
+              ><span class="rail-line" aria-hidden="true"
+                ><span class="rail-flow-track"><i></i></span
+                ><svg
+                  class="rail-arrow"
+                  width="7"
+                  height="9"
+                  viewBox="0 0 7 9"
+                  fill="none"
+                >
+                  <path
+                    d="m1 1 4 3.5L1 8"
+                    stroke="currentColor"
+                    stroke-width="1"
+                  /></svg></span
+              ><span
+                ><span class="network-logo"
+                  ><img
+                    src="/assets/near.svg"
+                    alt=""
+                    width="22"
+                    height="22" /></span
+                >NEAR</span
+              >
+            </div>
+            <span class="hero-network-note"
+              >Sepolia · NEAR testnet<br />Test assets only</span
+            >
+          </div>
+        </section>
+      </div>
+      <section class="product-section site-wrap" id="product">
+        <div class="section-heading">
+          <h2>Every position.<br /><span>One clear view.</span></h2>
+          <div>
+            <p>
+              Collateral, debt and your next action.<br />Open a position for
+              everything else.
+            </p>
+            <a class="text-link" href="/app.html"
+              >Open dashboard <span aria-hidden="true">↗</span></a
+            >
+          </div>
+        </div>
+        <div class="preview-window">
+          <div class="preview-window-top">
+            <span class="preview-wordmark"
+              ><span
+                class="brand brand--compact"
+                id="preview-brand"
+                aria-label="Rino"
+                role="img"
+                ><span class="brand-mark" aria-hidden="true"
+                  ><svg viewBox="6 3 28 25" fill="none">
+                    <path
+                      class="brand-body"
+                      d="M6 28V17L16 10H27L34 18L29 28H20L16 22L11 28Z"
+                      fill="currentColor"
+                    />
+                    <path
+                      d="M27 10L31 3L32 14ZM14 10L16 6L20 10Z"
+                      fill="currentColor"
+                    />
+                    <circle
+                      cx="27"
+                      cy="18"
+                      r="1.4"
+                      fill="var(--brand-eye, var(--surface))"
+                    /></svg></span
+                ><span class="brand-name">ЯINO</span></span
+              ><span class="preview-label">/ Dashboard</span></span
+            ><span class="sample-tag">Illustrative positions</span>
+          </div>
+          <div class="preview-window-body">
+            <dl class="mini-stats">
+              <div>
+                <dt>Collateral</dt>
+                <dd>0.47 <span>ETH</span></dd>
+              </div>
+              <div>
+                <dt>Isolated positions</dt>
+                <dd>3 <span>markets</span></dd>
+              </div>
+              <div>
+                <dt>Eligible offers</dt>
+                <dd>1 <span>offer</span></dd>
+              </div>
+            </dl>
+            <div id="mini-positions">
+              <table
+                class="mini-table"
+                aria-label="Illustrative isolated positions"
+              >
+                <thead>
+                  <tr>
+                    <th scope="col">Position</th>
+                    <th scope="col">Collateral</th>
+                    <th scope="col">Market debt</th>
+                    <th scope="col">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>
+                      <a href="/app.html"
+                        ><span class="position-name"
+                          ><span class="asset-icon"
+                            ><img
+                              src="/assets/ethereum.png"
+                              width="22"
+                              height="22"
+                              alt="" /></span
+                          ><span
+                            ><b>ETH Market 01</b
+                            ><small>Sepolia · Market 01</small></span
+                          ></span
+                        ></a
+                      >
+                    </td>
+                    <td>
+                      <span class="mini-label">Collateral</span>0.12
+                      <small>ETH</small>
+                    </td>
+                    <td>
+                      <span class="mini-label">Market debt</span>101
+                      <small>CREDIT</small>
+                    </td>
+                    <td><span class="badge active">Active</span></td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <a href="/app.html"
+                        ><span class="position-name"
+                          ><span class="asset-icon"
+                            ><img
+                              src="/assets/ethereum.png"
+                              width="22"
+                              height="22"
+                              alt="" /></span
+                          ><span
+                            ><b>ETH Market 02</b
+                            ><small>Sepolia · Market 02</small></span
+                          ></span
+                        ></a
+                      >
+                    </td>
+                    <td>
+                      <span class="mini-label">Collateral</span>0.15
+                      <small>ETH</small>
+                    </td>
+                    <td>
+                      <span class="mini-label">Market debt</span>0
+                      <small>CREDIT</small>
+                    </td>
+                    <td><span class="badge ready">Ready to borrow</span></td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <a href="/app.html"
+                        ><span class="position-name"
+                          ><span class="asset-icon"
+                            ><img
+                              src="/assets/ethereum.png"
+                              width="22"
+                              height="22"
+                              alt="" /></span
+                          ><span
+                            ><b>ETH Market 03</b
+                            ><small>Sepolia · Market 03</small></span
+                          ></span
+                        ></a
+                      >
+                    </td>
+                    <td>
+                      <span class="mini-label">Collateral</span>0.20
+                      <small>ETH</small>
+                    </td>
+                    <td>
+                      <span class="mini-label">Market debt</span>0
+                      <small>CREDIT</small>
+                    </td>
+                    <td><span class="badge repaid">Repaid</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="product-caption">
+          <span>Separate vaults. Separate loans.</span>
+          <p>
+            Illustrative values. Each market has its own CREDIT token,
+            collateral and maturity. Balances are not combined across token
+            identities.
+          </p>
+        </div>
+      </section>
+      <section class="terms-section" id="terms">
+        <div class="site-wrap">
+          <div class="section-heading">
+            <h2>The terms,<br /><span>in plain numbers.</span></h2>
+            <p>The public test offer.<br />No variable-rate calculation.</p>
+          </div>
+          <dl class="offer-values">
+            <div>
+              <dt>Loan principal</dt>
+              <dd>100 <small>CREDIT</small></dd>
+            </div>
+            <div>
+              <dt>One-time fee</dt>
+              <dd>1 <small>CREDIT</small></dd>
+            </div>
+            <div>
+              <dt>Total repayment</dt>
+              <dd>101 <small>CREDIT</small></dd>
+            </div>
+            <div>
+              <dt>From borrowing</dt>
+              <dd>24 <small>hours</small></dd>
+            </div>
+          </dl>
+          <div class="terms-footnote">
+            <p>
+              Minimum collateral: 0.1126 ETH, including a 0.0126 ETH settlement
+              reserve. Repay before maturity, then release collateral
+              separately.
+            </p>
+            <p>
+              CREDIT is a demonstration token with no dollar peg or promised
+              redemption.
+            </p>
+          </div>
+        </div>
+      </section>
+      <section class="site-faq site-wrap" id="questions">
+        <h2>Questions.</h2>
+        <div class="site-faq-list">
+          <details>
+            <summary>What can I use as collateral?</summary>
+            <p>
+              Native ETH deposited into a dedicated Rino-controlled Ethereum
+              vault. The current fixed offer requires at least 0.1126 ETH,
+              including a 0.0126 ETH settlement reserve, for one 100 CREDIT
+              loan. These test terms use a fixed 2,000 CREDIT per ETH reference
+              and 50% maximum LTV, rather than a live market price. External
+              vault balances cannot be imported.
+            </p>
+          </details>
+          <details>
+            <summary>Does Rino support multiple positions?</summary>
+            <p>
+              The app lists configured, isolated markets. Each market has one
+              vault and loan, with its own collateral, debt and maturity.
+              Separate controllers issue separate CREDIT tokens, so balances
+              remain market-specific. Creating a new market requires a separate
+              reviewed deployment.
+            </p>
+          </details>
+          <details>
+            <summary>Why does the app use two wallets?</summary>
+            <p>
+              Your NEAR loan account signs borrowing, repayment and loan
+              management. Your Ethereum collateral wallet sends ETH to your
+              designated vault. Connect NEAR to begin; connect Ethereum when you
+              add collateral. They remain separate accounts with separate
+              approvals.
+            </p>
+          </details>
+          <details>
+            <summary>How do repayment and release work?</summary>
+            <p>
+              For the public test offer, repay the full 101 CREDIT on NEAR
+              before maturity, then request ETH release to the designated
+              borrower address. Ethereum completion must be authenticated on
+              NEAR before closure. Fees come from the vault. Terminal vaults
+              retire and must not receive new deposits.
+            </p>
+          </details>
+          <details>
+            <summary>What happens at maturity?</summary>
+            <p>
+              CREDIT repayment is unavailable at or after maturity. The lender
+              can lock default settlement. Under the public test terms the
+              lender’s ETH payout is capped at 0.0505 ETH, subject to available
+              funds and fees. Remaining borrower surplus is returned separately.
+            </p>
+          </details>
+          <details>
+            <summary>Which networks does Rino use?</summary>
+            <p>
+              Rino uses Ethereum Sepolia and NEAR testnet. CREDIT is a test
+              asset with no dollar peg or promised redemption. In public mode
+              your connected wallets authorize financial actions. Configured
+              RPC, MPC, executor services and developer full-access keys remain
+              trusted; a completed local demonstration does not establish
+              public-chain execution or TEE verification.
+            </p>
+          </details>
+        </div>
+      </section>
+      <section class="site-close">
+        <div class="site-wrap">
+          <div>
+            <h2>Borrow on NEAR.<br /><span>Backed on Ethereum.</span></h2>
+            <a class="button hero-launch" href="/app.html"
+              >Launch app <span aria-hidden="true">↗</span></a
+            >
+          </div>
+          <div class="closing-wordmark" aria-hidden="true">
+            ЯINO<span>↗</span>
+          </div>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer site-wrap">
+      <a class="brand" href="/" aria-label="Rino home" id="footer-brand"
+        ><span class="brand-mark" aria-hidden="true"
+          ><svg viewBox="6 3 28 25" fill="none">
+            <path
+              class="brand-body"
+              d="M6 28V17L16 10H27L34 18L29 28H20L16 22L11 28Z"
+              fill="currentColor"
+            />
+            <path
+              d="M27 10L31 3L32 14ZM14 10L16 6L20 10Z"
+              fill="currentColor"
+            />
+            <circle
+              cx="27"
+              cy="18"
+              r="1.4"
+              fill="var(--brand-eye, var(--surface))"
+            /></svg></span
+        ><span class="brand-name">ЯINO</span></a
+      ><span>Sepolia + NEAR testnet. Test assets only.</span
+      ><a href="#questions">Questions <span aria-hidden="true">↗</span></a>
+    </footer>
+    <script type="module" src="/src/landing.ts"></script>
   </body>
 </html>

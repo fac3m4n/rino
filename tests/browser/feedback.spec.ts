@@ -1,3 +1,12 @@
+import {
+  installReadOnlyNearParticipant,
+  submitReviewed,
+  openRecovery,
+  openEvidence,
+  closePanel,
+  connectNear,
+} from "./ui-helpers";
+import { installMarketCatalog } from "./market-fixtures";
 /** Real App/client/guards with controlled transport and wallet boundaries; not chain evidence. */
 import { expect, test, type Page, type Route } from "@playwright/test";
 import {
@@ -18,10 +27,11 @@ test.beforeEach(async ({ page }) => {
 const toast = (page: Page) =>
   page.getByRole("region", { name: "Feedback", exact: true });
 const repay = (page: Page) =>
-  page.getByRole("button", { name: "Repay 101 CREDIT", exact: true });
+  page.getByRole("button", { name: "Repay loan", exact: true });
 async function local(page: Page) {
   let reads = 0,
     posts = 0;
+  await installMarketCatalog(page, configFixture);
   await page.route("**/api/config*", (r) => {
     reads++;
     return r.fulfill({ json: configFixture });
@@ -48,23 +58,25 @@ test("@feedback initial snapshot stays unknown with accessible loading until del
   await page.route("**/api/config*", (r) => {
     config = r;
   });
-  await page.goto("/");
+  await page.goto("/app.html");
   await expect(
-    page.getByRole("status").filter({ hasText: "Loading current position" }),
-  ).toBeVisible({ timeout: 3000 });
-  await expect(page.locator(".network-label")).toHaveText(
-    "Connecting networks",
-    { timeout: 3000 },
-  );
-  await expect(page.getByTestId("loan-debt")).toHaveText("— CREDIT");
+    page.getByRole("heading", { name: "Dashboard", exact: true }),
+  ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Loading credit line…", exact: true }),
-  ).toBeDisabled({ timeout: 3000 });
+    page.getByRole("button", { name: "Network details", exact: true }),
+  ).toContainText("Connecting");
+  await expect(repay(page)).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Confirm action", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Connect wallet", exact: true }).first(),
+  ).toBeVisible();
   await expect.poll(() => !!config, { timeout: 3000 }).toBe(true);
   await config!.fulfill({ json: configFixture });
   await expect(repay(page)).toBeEnabled({ timeout: 3000 });
   await expect(
-    page.getByRole("status").filter({ hasText: "Loading current position" }),
+    page.getByRole("button", { name: "Loading", exact: true }),
   ).toHaveCount(0);
 });
 // Catches stacked routine feedback, lost message evidence and a duplicate live announcement source.
@@ -84,14 +96,14 @@ test("@feedback routine info uses one concise visible announcement surface", asy
       },
     });
   });
-  await page.goto("/");
+  await page.goto("/app.html");
   await expect(repay(page)).toBeEnabled({ timeout: 3000 });
-  await repay(page).click();
+  await submitReviewed(page, repay(page));
   await expect(toast(page)).toBeVisible({ timeout: 3000 });
   await expect(repay(page)).toBeEnabled({ timeout: 3000 });
   const feedbackSurfaces = await page
     .locator(
-      'main [role="status"], main [role="region"][aria-label="Feedback"]',
+      '[role="status"]:visible, [role="region"][aria-label="Feedback"]:visible',
     )
     .evaluateAll(
       (elements) =>
@@ -140,10 +152,10 @@ test("@feedback pending progress dismissal never enables a second submission", a
     actionPosts++;
     action = r;
   });
-  await page.goto("/");
+  await page.goto("/app.html");
   await expect(repay(page)).toBeEnabled({ timeout: 3000 });
   hold = true;
-  await repay(page).click();
+  await submitReviewed(page, repay(page));
   await expect(toast(page)).toContainText("Checking fresh state", {
     timeout: 3000,
   });
@@ -155,9 +167,7 @@ test("@feedback pending progress dismissal never enables a second submission", a
     .getByRole("button", { name: "Dismiss notification" })
     .click();
   await expect(toast(page)).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Waiting for receipts…", exact: true }),
-  ).toBeDisabled();
+  await expect(page.locator(".positions-table .row-action")).toBeDisabled();
   expect(actionPosts).toBe(1);
   await expect.poll(() => !!action, { timeout: 3000 }).toBe(true);
   await action!.fulfill({
@@ -181,25 +191,26 @@ test("@feedback errors and unknown outcomes survive timeout and toast dismissal"
   page,
 }) => {
   const f = await local(page);
-  await page.goto("/");
+  await page.goto("/app.html");
   await expect(repay(page)).toBeEnabled({ timeout: 3000 });
-  await repay(page).click();
+  await submitReviewed(page, repay(page));
   await expect.poll(f.posts, { timeout: 3000 }).toBe(1);
   await page.clock.fastForward(ACTION_TIMEOUT_MS + 1);
   await expect(toast(page)).toContainText(/uncertain|unknown/i, {
     timeout: 3000,
   });
-  await expect(repay(page)).toBeDisabled({ timeout: 3000 });
+  await expect(repay(page)).toHaveCount(0, { timeout: 3000 });
   await page.clock.fastForward(6001);
   await expect(toast(page)).toBeVisible({ timeout: 3000 });
   await toast(page)
     .getByRole("button", { name: "Dismiss notification" })
     .click();
   await expect(page.getByRole("alert")).toContainText(/uncertain/i);
+  await openRecovery(page);
   await expect(
     page.getByRole("button", { name: "Refresh chain state", exact: true }),
   ).toBeVisible();
-  await expect(repay(page)).toBeDisabled();
+  await expect(repay(page)).toHaveCount(0);
   expect(f.posts()).toBe(1);
 });
 // Catches premature expiration, timer restart on hover/focus changes, or UI-driven reads.
@@ -219,9 +230,9 @@ test("@feedback informational toast expires at six seconds and pauses on hover a
       },
     });
   });
-  await page.goto("/");
+  await page.goto("/app.html");
   await expect(repay(page)).toBeEnabled({ timeout: 3000 });
-  await repay(page).click();
+  await submitReviewed(page, repay(page));
   await expect(toast(page)).toContainText("Fixture recorded", {
     timeout: 3000,
   });
@@ -253,14 +264,14 @@ test("@feedback informational toast expires at six seconds and pauses on hover a
   await expect(toast(page)).toHaveCount(0, { timeout: 3000 });
   expect(posts).toBe(1);
   expect(f.reads()).toBe(reads);
-  await repay(page).click();
+  await submitReviewed(page, repay(page));
   await expect(toast(page)).toContainText("Fixture recorded", {
     timeout: 3000,
   });
   await toast(page)
     .getByRole("button", { name: "Dismiss notification" })
     .click();
-  await repay(page).click();
+  await submitReviewed(page, repay(page));
   await expect(toast(page)).toContainText("Fixture recorded", {
     timeout: 3000,
   });
@@ -284,6 +295,7 @@ test("@feedback wallet return stays neutral and final false callback never claim
     capabilities: { operations: true },
     near: { ...configFixture.near, networkId: "testnet" },
   };
+  await installMarketCatalog(page, config);
   await page.route("**/api/config*", (r) => r.fulfill({ json: config }));
   await page.route("**/api/state*", (r) => r.fulfill({ json: stateFixture }));
   await page.route("**/api/receipts*", (r) => r.fulfill({ json: [] }));
@@ -300,10 +312,12 @@ test("@feedback wallet return stays neutral and final false callback never claim
         contentType: "application/javascript",
         body: `
     export class NearConnector {
+      whenManifestLoaded = Promise.resolve();
+      availableWallets = [{manifest:{id:"meteor-wallet",name:"Meteor"}}];
       listeners = {}; on(n,cb){this.listeners[n]=cb} off(n){delete this.listeners[n]}
       async getConnectedWallet(){throw Error('not connected')}
       async connect(){const wallet=await this.wallet();this.listeners['wallet:signIn']?.({wallet,accounts:await wallet.getAccounts(),success:true,source:'signIn'});return wallet}
-      async wallet(){return {manifest:{id:'fixture'},getAccounts:async()=>[{accountId:'borrower.test',publicKey:'ed25519:fixture'}],signIn:async()=>[{accountId:'borrower.test',publicKey:'ed25519:fixture'}],signAndSendTransaction:async()=>{await globalThis.feedbackWallet();return {status:{SuccessValue:'dHJ1ZQ=='},transaction:{hash:'11111111111111111111111111111111',signer_id:'borrower.test'},receipts_outcome:[]}}}}
+      async wallet(){return {manifest:{id:'meteor-wallet'},getAccounts:async()=>[{accountId:'borrower.test',publicKey:'ed25519:fixture'}],signIn:async()=>[{accountId:'borrower.test',publicKey:'ed25519:fixture'}],signAndSendTransaction:async()=>{await globalThis.feedbackWallet();return {status:{SuccessValue:'dHJ1ZQ=='},transaction:{hash:'11111111111111111111111111111111',signer_id:'borrower.test'},receipts_outcome:[]}}}}
     } export default { NearConnector };`,
       }),
   );
@@ -397,15 +411,10 @@ test("@feedback wallet return stays neutral and final false callback never claim
     }
     throw Error(`Unexpected operation route ${path}`);
   });
-  await page.goto("/");
-  await expect(
-    page.getByRole("button", { name: "Connect NEAR testnet", exact: true }),
-  ).toBeVisible({ timeout: 3000 });
-  await page
-    .getByRole("button", { name: "Connect NEAR testnet", exact: true })
-    .click();
+  await page.goto("/app.html");
+  await connectNear(page);
   await expect(repay(page)).toBeEnabled({ timeout: 3000 });
-  await repay(page).click();
+  await submitReviewed(page, repay(page));
   await expect.poll(() => wallets, { timeout: 3000 }).toBe(1);
   await expect(toast(page)).toContainText(
     "Waiting for wallet approval or evidence",
@@ -414,9 +423,7 @@ test("@feedback wallet return stays neutral and final false callback never claim
   await toast(page)
     .getByRole("button", { name: "Dismiss notification" })
     .click();
-  await expect(
-    page.getByRole("button", { name: "Waiting for receipts…", exact: true }),
-  ).toBeDisabled();
+  await expect(page.locator(".positions-table .row-action")).toBeDisabled();
   expect({ creates, wallets, observations, operationPosts }).toEqual({
     creates: 1,
     wallets: 1,
@@ -425,10 +432,11 @@ test("@feedback wallet return stays neutral and final false callback never claim
   });
   releaseWallet!();
   await expect(toast(page)).toContainText(
-    /Checking transaction|Request recorded/,
+    /Checking transaction|Request recorded|Request needs checking/,
     { timeout: 3000 },
   );
-  await expect(repay(page)).toBeDisabled();
+  await expect(repay(page)).toHaveCount(0);
+  await openRecovery(page);
   await page
     .getByRole("button", { name: "Check operation", exact: true })
     .click();
@@ -516,6 +524,12 @@ test("@feedback hidden offline partial recovery and UI interactions keep read bu
       },
     ],
   };
+  await installMarketCatalog(page, {
+    ...configFixture,
+    mode: "public",
+    capabilities: { operations: true },
+    near: { ...configFixture.near, networkId: "testnet" },
+  });
   await page.route("**/api/config*", (r) => {
     reads++;
     return r.fulfill({
@@ -547,11 +561,15 @@ test("@feedback hidden offline partial recovery and UI interactions keep read bu
     posts++;
     return r.abort();
   });
-  await page.goto("/");
-  await expect(toast(page)).toContainText("Checking transaction", {
-    timeout: 3000,
-  });
-  await expect(repay(page)).toBeDisabled();
+  await installReadOnlyNearParticipant(page);
+  await page.goto("/app.html");
+  await expect(toast(page)).toContainText(
+    /Checking transaction|Request needs checking/,
+    {
+      timeout: 3000,
+    },
+  );
+  await expect(repay(page)).toHaveCount(0);
   const environment = (visible: boolean, online: boolean) =>
     page.evaluate(
       ([v, o]) =>
@@ -564,23 +582,23 @@ test("@feedback hidden offline partial recovery and UI interactions keep read bu
     );
   await environment(false, true);
   const baseline = reads;
-  await page.getByRole("button", { name: /Switch to dark theme/ }).click();
+  await page.getByRole("button", { name: /Switch to dark theme/ }).focus();
+  await page.keyboard.press("Enter");
   await toast(page)
     .getByRole("button", { name: "Dismiss notification" })
     .click();
-  await page
-    .getByRole("button", { name: "Open evidence", exact: true })
-    .click();
+  await openEvidence(page);
   await page.keyboard.press("Escape");
   await page.clock.runFor(120000);
   expect(reads).toBe(baseline);
   await environment(true, false);
   await page.clock.runFor(120000);
   expect(reads).toBe(baseline);
+  await openRecovery(page);
   await expect(
     page.getByRole("region", { name: "Operation recovery" }),
   ).toContainText("First transfer verified; next outcome unknown.");
-  await expect(repay(page)).toBeDisabled();
+  await expect(repay(page)).toHaveCount(0);
   await environment(true, true);
   await expect.poll(() => reads, { timeout: 3000 }).toBe(baseline + 4);
   await environment(false, true);

@@ -1,0 +1,19 @@
+{
+  "near": {
+    "page": "https://near.org/",
+    "asset": "NEAR icon SVG from official header; original artwork unchanged"
+  },
+  "ethereum": {
+    "page": "https://ethereum.org/assets/",
+    "asset": "https://ethereum.org/_next/static/media/eth-diamond-black.31u_5ih2w7osr.png"
+  },
+  "credit": {
+    "asset": "Rino-owned text monogram, not a third-party asset logo"
+  },
+  "rino": {
+    "source": "apps/web/src/Brand.tsx",
+    "geometry": "Original rhino paths unchanged; shared lockup uses tight bounds and optical alignment",
+    "favicon": "assets/rino-mark.svg"
+  },
+  "usage": "Original network marks and project-owned Rino mark, copied from the approved local design; no external runtime request."
+}

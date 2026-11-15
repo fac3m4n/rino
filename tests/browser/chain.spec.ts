@@ -2,7 +2,20 @@ import { test, expect, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { ActionResult, Receipt, State } from "@rino/coordinator/api";
+import type {
+  ActionName,
+  ActionResult,
+  Receipt,
+  State,
+} from "@rino/coordinator/api";
+
+import {
+  closePanel,
+  localActor,
+  openEvidence,
+  openPosition,
+  openRecovery,
+} from "./ui-helpers";
 
 const root = resolve(import.meta.dirname, "../..");
 const origin = "http://127.0.0.1:3001";
@@ -60,37 +73,78 @@ test.afterEach(async ({}, info) => {
       contentType: "text/plain",
     });
 });
+const actionLabels: Record<ActionName, string | RegExp> = {
+  initialize: "Create position",
+  fund: "Fund offer + vault",
+  prove: "Verify collateral",
+  borrow: "Borrow 100 CREDIT",
+  repay: "Repay 101 CREDIT",
+  default: "Settle overdue loan",
+  cancel: "Cancel position",
+  settle: "Release collateral",
+  claim: /^Claim [0-9,.]+ CREDIT$/,
+  "challenge-forgery": "Try forged proof",
+  "challenge-duplicate": "Try duplicate borrow",
+  "advance-maturity": "Advance to maturity",
+  recover: "Reconcile pending operation",
+};
 async function action(
   page: Page,
-  label: string,
-  actionName: string,
+  actionName: ActionName,
 ): Promise<ActionResult> {
-  const button = page.getByRole("button", { name: label, exact: true });
+  if (actionName === "claim") {
+    await openRecovery(page);
+    await page
+      .getByRole("dialog")
+      .getByText("Settlement controls", { exact: true })
+      .click();
+  } else {
+    await openPosition(page);
+  }
+  if (
+    ["challenge-forgery", "challenge-duplicate", "advance-maturity"].includes(
+      actionName,
+    )
+  )
+    await page
+      .getByRole("dialog")
+      .getByText("Development controls", { exact: true })
+      .click();
+  const button = page
+    .getByRole("dialog")
+    .getByRole("button", { name: actionLabels[actionName], exact: true });
   await expect(button).toBeEnabled();
+  await button.click();
+  const confirm = page.getByRole("button", {
+    name: "Confirm action",
+    exact: true,
+  });
+  await expect(confirm).toBeEnabled();
   const responsePromise = page.waitForResponse(
     (response) =>
       response.url() === `${origin}/api/actions` &&
-      response.request().method() === "POST",
+      response.request().method() === "POST" &&
+      response.request().postDataJSON().action === actionName,
   );
-  await button.click();
+  await confirm.click();
   const response = await responsePromise;
   const result = await response.json();
+  expect(response.request().postDataJSON().action).toBe(actionName);
   expect(response.ok(), JSON.stringify(result)).toBe(true);
   expect(result.ok, JSON.stringify(result)).toBe(true);
   await expect(
-    page.getByRole("status").filter({ hasText: result.message }),
+    page.getByRole("status").filter({ hasText: result.message }).first(),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Waiting for receipts…" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("dialog").locator(".spin")).toHaveCount(0);
+  await closePanel(page);
   return result;
 }
 async function fund(page: Page) {
-  await action(page, "Initialize local market", "initialize");
-  await page.getByRole("button", { name: "Lender", exact: true }).click();
-  await action(page, "Fund offer + vault", "fund");
+  await action(page, "initialize");
+  await localActor(page, "Lender");
+  await action(page, "fund");
+  await localActor(page, "Borrower");
   await expect(page.getByTestId("vault-balance")).toHaveText("0.12 ETH");
-  await page.getByRole("button", { name: "Borrower", exact: true }).click();
 }
 for (const scenario of ["repay", "default", "cancel"] as const) {
   test(`@chain real two-chain ${scenario} flow`, async ({ page }, info) => {
@@ -111,21 +165,21 @@ for (const scenario of ["repay", "default", "cancel"] as const) {
         `${request.method()} ${request.url()}: ${request.failure()?.errorText}`,
       );
     });
-    await page.goto(origin);
+    await page.goto(`${origin}/app.html`);
     await expect(
-      page.getByText("Local two-chain demo", { exact: true }),
+      page.getByText("Owned local chains · Development actors", {
+        exact: true,
+      }),
     ).toBeVisible();
     await fund(page);
     if (scenario === "cancel") {
-      await page.getByText("Recovery & loan controls", { exact: true }).click();
-      await action(page, "Cancel before borrowing", "cancel");
+      await action(page, "cancel");
     } else {
       if (scenario === "repay") {
-        await page.getByText("Test the safeguards", { exact: true }).click();
         const before = (await page.request
           .get(`${origin}/api/state`)
           .then((r) => r.json())) as State;
-        await action(page, "Try forged proof", "challenge-forgery");
+        await action(page, "challenge-forgery");
         const after = (await page.request
           .get(`${origin}/api/state`)
           .then((r) => r.json())) as State;
@@ -146,8 +200,8 @@ for (const scenario of ["repay", "default", "cancel"] as const) {
           receipts.some((r) => r.status === "rejected" && r.hash !== null),
         ).toBe(true);
       }
-      await action(page, "Authenticate collateral", "prove");
-      await action(page, "Borrow 100 CREDIT", "borrow");
+      await action(page, "prove");
+      await action(page, "borrow");
       await expect(page.getByTestId("loan-debt")).toHaveText("101 CREDIT");
       await page.screenshot({
         path: `.cache/rino-browser/chain-${scenario}-${info.project.name}-active.png`,
@@ -157,7 +211,7 @@ for (const scenario of ["repay", "default", "cancel"] as const) {
         const before = (await page.request
           .get(`${origin}/api/state`)
           .then((r) => r.json())) as State;
-        await action(page, "Try duplicate borrow", "challenge-duplicate");
+        await action(page, "challenge-duplicate");
         const after = (await page.request
           .get(`${origin}/api/state`)
           .then((r) => r.json())) as State;
@@ -165,17 +219,19 @@ for (const scenario of ["repay", "default", "cancel"] as const) {
           before.market?.borrower_balance_units,
         );
         expect(after.market?.debt_units).toBe("101000000");
-        await action(page, "Repay 101 CREDIT", "repay");
+        await action(page, "repay");
       } else {
-        await page.getByRole("button", { name: "Lender", exact: true }).click();
-        await page
-          .getByText("Recovery & loan controls", { exact: true })
-          .click();
-        await action(page, "Advance to maturity", "advance-maturity");
-        await action(page, "Lock default", "default");
+        await localActor(page, "Lender");
+        await action(page, "advance-maturity");
+        await action(page, "default");
       }
     }
-    await action(page, "Release collateral", "settle");
+    await action(page, "settle");
+    await openPosition(page);
+    await page
+      .getByRole("dialog")
+      .getByText("Position history", { exact: true })
+      .click();
     if (scenario === "cancel") {
       await expect(
         page.getByText("Not borrowed · cancelled", { exact: true }),
@@ -184,6 +240,10 @@ for (const scenario of ["repay", "default", "cancel"] as const) {
         page.getByText("Not required · cancellation", { exact: true }),
       ).toBeVisible();
     }
+    await page
+      .getByRole("dialog")
+      .getByText("Settlement details", { exact: true })
+      .click();
     await expect(page.getByTestId("settlement-stage")).toHaveText(
       "NEAR-authenticated release",
     );
@@ -220,9 +280,7 @@ for (const scenario of ["repay", "default", "cancel"] as const) {
       path: `.cache/rino-browser/chain-${scenario}-${info.project.name}-complete.png`,
       fullPage: true,
     });
-    await page
-      .getByRole("button", { name: "Open evidence", exact: true })
-      .click();
+    await openEvidence(page);
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.screenshot({
       path: `.cache/rino-browser/chain-${scenario}-${info.project.name}-evidence.png`,
@@ -250,11 +308,10 @@ for (const scenario of ["repay", "default", "cancel"] as const) {
 test("@refill real withdrawn CREDIT can be restored without depositing more ETH", async ({
   page,
 }, info) => {
-  await page.goto(origin);
+  await page.goto(`${origin}/app.html`);
   await fund(page);
-  await page.getByRole("button", { name: "Lender", exact: true }).click();
-  await page.getByText("Recovery & loan controls", { exact: true }).click();
-  await action(page, "Claim lender CREDIT", "claim");
+  await localActor(page, "Lender");
+  await action(page, "claim");
   const withdrawn = (await page.request
     .get(`${origin}/api/state`)
     .then((r) => r.json())) as State;
@@ -264,7 +321,7 @@ test("@refill real withdrawn CREDIT can be restored without depositing more ETH"
   expect(withdrawn.market?.phase).toBe("Offered");
   expect(withdrawn.market?.available_liquidity_units).toBe("0");
   expect(withdrawn.ethereum?.vaultBalanceWei).toBe("120000000000000000");
-  await action(page, "Fund offer + vault", "fund");
+  await action(page, "fund");
   const restored = (await page.request
     .get(`${origin}/api/state`)
     .then((r) => r.json())) as State;
@@ -283,9 +340,9 @@ test("@refill real withdrawn CREDIT can be restored without depositing more ETH"
     beforeReceipts.filter((r) => r.chain === "ethereum" && r.action === "fund")
       .length,
   );
-  await page.getByRole("button", { name: "Borrower", exact: true }).click();
-  await action(page, "Authenticate collateral", "prove");
-  await action(page, "Borrow 100 CREDIT", "borrow");
+  await localActor(page, "Borrower");
+  await action(page, "prove");
+  await action(page, "borrow");
   await expect(page.getByTestId("loan-debt")).toHaveText("101 CREDIT");
   await page.screenshot({
     path: `.cache/rino-browser/fix1-refill-active-${info.project.name}.png`,
@@ -315,8 +372,8 @@ test("@refill real withdrawn CREDIT can be restored without depositing more ETH"
 test("@partial real partial collateral is funded by delta, reauthenticated and borrowed", async ({
   page,
 }, info) => {
-  await page.goto(origin);
-  await action(page, "Initialize local market", "initialize");
+  await page.goto(`${origin}/app.html`);
+  await action(page, "initialize");
   const config = await page.request
     .get(`${origin}/api/config`)
     .then((r) => r.json());
@@ -353,22 +410,25 @@ test("@partial real partial collateral is funded by delta, reauthenticated and b
   await expect(page.getByTestId("vault-balance")).toHaveText("0.05 ETH", {
     timeout: 10000,
   });
-  await page.getByRole("button", { name: "Lender", exact: true }).click();
-  await action(page, "Fund offer + vault", "fund");
+  await localActor(page, "Lender");
+  await action(page, "fund");
   const topped = (await page.request
     .get(`${origin}/api/state`)
     .then((r) => r.json())) as State;
   expect(topped.ethereum?.vaultBalanceWei).toBe("120000000000000000");
   expect(topped.evidence?.balance_wei).toBe("50000000000000000");
-  await page.getByRole("button", { name: "Borrower", exact: true }).click();
+  await localActor(page, "Borrower");
+  await openPosition(page);
   await expect(
-    page.getByRole("button", { name: "Authenticate collateral", exact: true }),
+    page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Verify collateral", exact: true }),
   ).toBeEnabled();
   await expect(
     page.getByRole("button", { name: "Borrow 100 CREDIT", exact: true }),
   ).toHaveCount(0);
-  await action(page, "Authenticate collateral", "prove");
-  await action(page, "Borrow 100 CREDIT", "borrow");
+  await action(page, "prove");
+  await action(page, "borrow");
   const final = (await page.request
     .get(`${origin}/api/state`)
     .then((r) => r.json())) as State;

@@ -1,3 +1,10 @@
+import { installMarketCatalog } from "./market-fixtures";
+import {
+  connectNear,
+  openPosition,
+  openRecovery,
+  submitReviewed,
+} from "./ui-helpers";
 /** Controlled external boundaries; real App/client/wallet guards, no chain evidence. */
 import { expect, test, type Page } from "@playwright/test";
 import {
@@ -11,7 +18,9 @@ const borrower = "rino-b-2593ce.testnet";
 const lender = "rino-l-2593ce.testnet";
 const id = "11111111-1111-4111-8111-111111111111";
 const proof = (page: Page) =>
-  page.getByRole("button", { name: /^Authenticate collateral/ });
+  page
+    .getByRole("dialog", { name: "ETH market", exact: true })
+    .getByRole("button", { name: /^Verify collateral/ });
 
 const goodHash = "11111111111111111111111111111111";
 const wrongHash = "11111111111111111111111111111112";
@@ -166,6 +175,7 @@ async function installRecovery(
       });
     }
   }
+  await installMarketCatalog(page, config);
   await page.route("**/api/config*", (r) => r.fulfill({ json: config }));
   await page.route("**/api/state*", (r) => {
     if (creates && new URL(r.request().url()).searchParams.get("fresh") === "1")
@@ -319,6 +329,8 @@ async function installRecovery(
         body: `
     const borrower = ${JSON.stringify(borrower)}, lender = ${JSON.stringify(lender)}, lostHashReply = ${JSON.stringify(options.lostHashReply === true)}, hash = ${JSON.stringify(goodHash)};
     export class NearConnector {
+            whenManifestLoaded = Promise.resolve();
+            availableWallets = [{ manifest: { id: 'meteor-wallet', name: 'Meteor' } }];
       listeners = {};
       on(name, cb) { this.listeners[name] = cb; }
       off(name) { delete this.listeners[name]; }
@@ -344,7 +356,11 @@ async function installRecovery(
   `,
       }),
   );
-  await page.goto("/");
+  await page.goto("/app.html");
+  if (options.seed) {
+    await connectNear(page);
+    await openRecovery(page);
+  }
   return {
     submissions: () => submissions,
     checks: () => checks,
@@ -359,24 +375,29 @@ test("@operation-recovery-red reload preserves an unresolved wallet request and 
   page,
 }) => {
   const fixture = await installRecovery(page);
-  await page
-    .getByRole("button", { name: "Connect NEAR testnet", exact: true })
-    .click();
+  await connectNear(page);
   await expect(
-    page.getByRole("button", { name: borrower, exact: true }),
+    page.getByRole("button", { name: `Wallets: ${borrower};`, exact: false }),
   ).toBeVisible({ timeout: 3000 });
   await expect(page.getByRole("alert")).toHaveCount(0);
+  await openPosition(page);
   await expect(proof(page)).toBeEnabled({ timeout: 3000 });
-  await proof(page).click();
+  await submitReviewed(page, proof(page));
   await expect.poll(fixture.submissions, { timeout: 3000 }).toBe(1);
   expect(fixture.operation()?.steps[0].started).toBe(true);
   await page.reload();
   await expect(
-    page.getByRole("button", { name: borrower, exact: true }),
+    page.getByRole("button", { name: `Wallets: ${borrower};`, exact: false }),
   ).toBeVisible({ timeout: 3000 });
   await expect(page.getByRole("alert")).toHaveCount(0);
-  // Behavioral RED: the frozen App enables this control after losing its memory.
-  await expect(proof(page)).toBeDisabled({ timeout: 2000 });
+  // Recovery hides financial actions until the original request is checked.
+  await expect(
+    page.getByRole("button", { name: "Check request", exact: true }).first(),
+  ).toBeVisible({ timeout: 2000 });
+  await expect(
+    page.getByRole("button", { name: /^Verify collateral/ }),
+  ).toHaveCount(0);
+  await openRecovery(page);
   await expect(
     page.getByRole("region", { name: "Operation recovery" }),
   ).toContainText("needs checking", { timeout: 2000 });
@@ -438,20 +459,24 @@ test("@operation-recovery lost hash observation reply never reopens the wallet",
   page,
 }) => {
   const fixture = await installRecovery(page, { lostHashReply: true });
-  await page
-    .getByRole("button", { name: "Connect NEAR testnet", exact: true })
-    .click();
+  await connectNear(page);
   await expect(
-    page.getByRole("button", { name: borrower, exact: true }),
+    page.getByRole("button", { name: `Wallets: ${borrower};`, exact: false }),
   ).toBeVisible({ timeout: 3000 });
   await expect(page.getByRole("alert")).toHaveCount(0);
+  await openPosition(page);
   await expect(proof(page)).toBeEnabled({ timeout: 3000 });
-  await proof(page).click();
+  await submitReviewed(page, proof(page));
   await expect.poll(fixture.submissions, { timeout: 3000 }).toBe(1);
+  await openRecovery(page);
   await expect(
     page.getByRole("region", { name: "Operation recovery" }),
   ).toContainText(goodHash, { timeout: 3000 });
   await page.reload();
+  await expect(
+    page.getByRole("button", { name: `Wallets: ${borrower};`, exact: false }),
+  ).toBeVisible({ timeout: 3000 });
+  await openRecovery(page);
   await expect(
     page.getByRole("region", { name: "Operation recovery" }),
   ).toContainText(goodHash, { timeout: 3000 });
@@ -462,38 +487,46 @@ test("@release-preparation stopped finality preparation alerts without opening a
   page,
 }) => {
   const fixture = await installRecovery(page, { stoppedRelease: true });
-  await page
-    .getByRole("button", { name: "Connect NEAR testnet", exact: true })
-    .click();
+  await connectNear(page);
   await expect(
-    page.getByRole("button", { name: borrower, exact: true }),
+    page.getByRole("button", { name: `Wallets: ${borrower};`, exact: false }),
   ).toBeVisible({ timeout: 3000 });
   await expect(page.getByTestId("loan-debt")).toHaveText("0 CREDIT");
+  await openPosition(page);
+  await page.getByText("Settlement details", { exact: true }).click();
   await expect(page.getByTestId("settlement-stage")).toHaveText(
     "Signed · awaiting inclusion",
   );
   await expect(page.getByRole("alert")).toHaveCount(0);
-  const release = page.getByRole("button", {
-    name: "Release collateral",
-    exact: true,
-  });
+  const release = page
+    .getByRole("dialog", { name: "ETH market", exact: true })
+    .getByRole("button", {
+      name: "Release collateral",
+      exact: true,
+    });
   await expect(release).toBeEnabled({ timeout: 3000 });
-  await release.click();
+  await submitReviewed(page, release);
   await expect.poll(fixture.creates, { timeout: 3000 }).toBe(1);
   expect(fixture.submissions()).toBe(0);
-  // Regression: the real App currently reports generic success for this failed create.
-  await expect(page.getByRole("alert")).toHaveText(finalityDetail, {
-    timeout: 2000,
-  });
+  // A stopped preparation must surface its durable failure without a success message.
+  await expect(
+    page.getByRole("alert").getByText(finalityDetail, { exact: true }),
+  ).toBeVisible({ timeout: 2000 });
   await expect(
     page.getByRole("status").filter({ hasText: "Operation recorded." }),
   ).toHaveCount(0);
   await expect.poll(fixture.freshReadsAfterCreate, { timeout: 3000 }).toBe(1);
+  await openPosition(page);
   await expect(release).toBeEnabled({ timeout: 3000 });
+  await openRecovery(page);
   await expect(
     page.getByRole("region", { name: "Operation recovery" }),
   ).toContainText(finalityDetail);
   await page.reload();
+  await expect(
+    page.getByRole("button", { name: `Wallets: ${borrower};`, exact: false }),
+  ).toBeVisible({ timeout: 3000 });
+  await openRecovery(page);
   await expect(
     page.getByRole("region", { name: "Operation recovery" }),
   ).toContainText(finalityDetail, { timeout: 3000 });

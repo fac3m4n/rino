@@ -57,7 +57,10 @@ export function ActivityTable({
                   <tr key={receipt.id}>
                     <td>
                       <b>{receipt.action}</b>
-                      <p className="activity-detail">{receipt.detail}</p>
+                      <details className="activity-detail">
+                        <summary>Details</summary>
+                        <p>{receipt.detail}</p>
+                      </details>
                     </td>
                     <td>{source[receipt.chain]}</td>
                     <td>

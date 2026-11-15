@@ -24,5 +24,14 @@ export default defineConfig({
       },
     },
   },
-  build: { sourcemap: false },
+  build: {
+    manifest: true,
+    sourcemap: false,
+    rollupOptions: {
+      input: {
+        landing: new URL("./index.html", import.meta.url).pathname,
+        app: new URL("./app.html", import.meta.url).pathname,
+      },
+    },
+  },
 });

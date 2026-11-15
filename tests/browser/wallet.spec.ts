@@ -1,11 +1,26 @@
+import {
+  installReadOnlyNearParticipant,
+  connectEthereum,
+  submitReviewed,
+  openRecovery,
+  closePanel,
+} from "./ui-helpers";
+import { installMarketCatalog } from "./market-fixtures";
 import { expect, test } from "@playwright/test";
 import { configFixture, stateFixture } from "../../apps/web/tests/fixtures";
 import { installFundingProvider } from "../../apps/web/tests/wallet-fixtures";
 test.setTimeout(30000);
+test.use({ actionTimeout: 4000 });
 for (const mode of ["timeout", "reject", "cancel", "speedup"])
   test(`@wallet actual viem ${mode} funding outcome`, async ({ page }) => {
     await page.clock.install();
     await page.addInitScript(installFundingProvider, mode);
+    await installMarketCatalog(page, {
+      ...configFixture,
+      mode: "public",
+      near: { ...configFixture.near, networkId: "testnet" },
+      ethereum: { ...configFixture.ethereum, rpcUrl: null },
+    });
     await page.route("**/api/config*", (r) =>
       r.fulfill({
         json: {
@@ -36,13 +51,15 @@ for (const mode of ["timeout", "reject", "cancel", "speedup"])
       }),
     );
     await page.route("**/api/receipts", (r) => r.fulfill({ json: [] }));
-    await page.goto("/");
-    await page
-      .getByRole("button", { name: "Connect Ethereum wallet", exact: true })
-      .click();
-    const funding = page.getByRole("button", { name: /^Fund vault/ });
+    await installReadOnlyNearParticipant(page);
+    await page.goto("/app.html");
+    await connectEthereum(page);
+    const funding = page.getByRole("button", {
+      name: "Add collateral",
+      exact: true,
+    });
     await expect(funding).toBeEnabled({ timeout: 3000 });
-    await funding.click();
+    await submitReviewed(page, funding);
     await expect
       .poll(
         () =>
@@ -62,7 +79,8 @@ for (const mode of ["timeout", "reject", "cancel", "speedup"])
       await expect(page.getByRole("alert")).toContainText(
         `0x${"a".repeat(64)}`,
       );
-      await expect(funding).toBeDisabled();
+      await expect(funding).toHaveCount(0);
+      await openRecovery(page);
       const resume = page.getByRole("button", {
         name: "Continue from checked state",
         exact: true,
@@ -71,16 +89,27 @@ for (const mode of ["timeout", "reject", "cancel", "speedup"])
       await page
         .getByRole("button", { name: "Refresh chain state", exact: true })
         .click();
-      await expect(funding).toBeDisabled();
+      await expect(funding).toHaveCount(0);
       await expect(page.getByTestId("vault-balance")).toHaveText("0.05 ETH");
       // An unrelated dust gift cannot authenticate the still-pending known wallet payment.
       observedBalance = "50000000000000001";
       await page
         .getByRole("button", { name: "Refresh chain state", exact: true })
         .click();
-      await expect(funding).toBeDisabled({ timeout: 3000 });
+      await expect(funding).toHaveCount(0, { timeout: 3000 });
       await expect(resume).toBeEnabled({ timeout: 3000 });
+      // Long known hashes must not expand the mobile layout beyond its visual viewport.
+      await expect
+        .poll(
+          () =>
+            page.evaluate(
+              () => innerWidth - (visualViewport?.width ?? innerWidth),
+            ),
+          { timeout: 3000 },
+        )
+        .toBeLessThanOrEqual(1);
       await resume.click();
+      await closePanel(page);
       await expect(funding).toBeEnabled();
     } else if (mode === "speedup") {
       await expect(

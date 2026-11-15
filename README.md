@@ -65,7 +65,27 @@ npm run dev:local
 
 For an already populated checkout, use `./tooling/setup-local.sh --cached` instead of `--download`. Open the URL printed by the supervisor. It creates owned NEAR Sandbox/Anvil chains, local mock MPC/executor services and a fresh demonstration market.
 
-Initialize as borrower, switch to lender to fund the offer and collateral, then return to borrower: verify collateral, borrow 100 CREDIT, repay 101 CREDIT and release the ETH. The local actor controls are demonstration tooling; the public flow requires the connected participant's wallet. Stop the supervisor with Ctrl-C.
+The root URL opens the public landing page. **Launch app** opens `/app.html`, with Dashboard, Lend and Activity. Initialize an available position from **New position**. Open **Wallets** to choose the local lender actor, then fund the offer and collateral. Return to the borrower actor to verify collateral, borrow 100 CREDIT, repay 101 CREDIT and release the ETH. Each financial action has a review before submission. Local actor controls use owned test accounts; public mode requires the connected participant's wallet. Stop the supervisor with Ctrl-C.
+
+The interface keeps wallet approval, submission, receipt verification and confirmed state separate. An uncertain request opens recovery instead of offering an automatic retry. Position details contain loan terms and collateral evidence; Activity links public transaction hashes to the appropriate explorer. Local-only receipts have no public explorer link.
+
+### Multiple positions
+
+The app lists operator-configured controllers, each with its own loan, vault and CREDIT token. It never combines CREDIT balances from different controllers. **New position** initializes an unused configured controller; it does not deploy contracts, import external vaults or reuse a retired vault. The current owned Sandbox setup has one controller.
+
+For additional existing NEAR testnet deployments, set `RINO_MARKETS_FILE` to an operator-owned JSON file before starting public mode. Paths are relative to that file:
+
+```json
+[
+  {
+    "id": "eth-reserve",
+    "name": "ETH reserve",
+    "manifestPath": "./eth-reserve.deployment.json"
+  }
+]
+```
+
+Each manifest uses the same reviewed deployment format as the primary `RINO_PUBLIC_MANIFEST`. The registry permits up to eight distinct controllers on the same supported network. It rejects duplicate identities and unknown market URLs. Reads, CSRF tokens, operations and recovery hints remain bound to the selected controller. Browser wallet requests are serialized across positions.
 
 ## Test and build
 
@@ -82,6 +102,8 @@ npm run build
 # artifact reproduction/tamper checks and browser tests
 ./tooling/check.sh --all
 ```
+
+The web build enforces gzip JavaScript budgets of 30 KiB for the landing page, 200 KiB for the initial app and 80 KiB per lazy group. The static landing loads no wallet SDK. Reduced-motion preferences disable decorative animation; both surfaces include keyboard focus and responsive layouts.
 
 ## Scope and trust model
 
