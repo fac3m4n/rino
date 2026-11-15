@@ -18,9 +18,9 @@ __pycache__/
 *.pyc
 submission-payload*.json
 idea-context.md
-# Preserve historical research locally; version the active build plan.
-/docs/*
-!/docs/rino/
+prototypes/
+# Internal development materials stay on this machine.
+/docs/
 scripts/
 
 # Local credentials, RPC endpoints and generated development artifacts.
@@ -34,3 +34,36 @@ scripts/
 coverage/
 playwright-report/
 test-results/
+
+# Private planning, agent configuration and design work (never publish).
+/.agents/
+/.codex/
+/.claude/
+/AGENTS.md
+/CONTRIBUTING.md
+/skills-lock.json
+/.mcp.json
+/plans/
+/specs/
+/research/
+**/docs/
+**/plans/
+**/specs/
+
+# Keep the public project README and required legal notices only.
+*.md
+*.mdx
+*.rst
+*.pdf
+*.docx
+!/README.md
+!**/LICENSE.md
+!**/NOTICE.md
+!**/THIRD_PARTY_NOTICES.md
+
+# Internal reference/research scripts; retain the local commit hook helper.
+!/scripts/
+/scripts/*
+!/scripts/check_commit_message.py
+/tests/proof-pipeline/fixtures/provenance.json
+/tests/proof-pipeline/fixtures/before-portability.provenance.json
